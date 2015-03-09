@@ -28,7 +28,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 class ARModel():
     '''
     For efficiency, we use SGD, so technically this is an approximation to, or 
-    variation of, the original AR model (which was SVM based).
+    variation of, the original Annotator Rationales model (which was SVM based).
     '''
     def __init__(self, X_pos_rationales, X_neg_rationales, 
                     C=1, C_contrast_scalar=.1, mu=10.0, alpha=0.01):
@@ -49,6 +49,7 @@ class ARModel():
         self.C_contrast_scalar = C_contrast_scalar
         self.mu = mu
         self.alpha = alpha
+
 
     def fit(self, X, y):
         '''
@@ -71,6 +72,10 @@ class ARModel():
         '''
         ####
         # generate psuedo (contrast) instances
+        #
+        # @TODO this is slow/inefficient, because we re-generate
+        # these every single time -- it would be better, for a given
+        # train/test split, to cache
         ####
         pos_pseudo_examples = _generate_pseudo_examples(X, self.X_pos_rationales, self.mu)
         neg_pseudo_examples = _generate_pseudo_examples(X, self.X_neg_rationales, self.mu)
@@ -92,22 +97,7 @@ class ARModel():
 
         print "all finished generating contrastive instances."
 
-        '''
-        if alpha_vals is None:
-            alpha_vals = 10.0**-np.arange(1,7)
-
-        params_d = {"alpha":alpha_vals}
-        ### 
-        # finally, just pass this forward to the SGD classifier.
-        # @TODO not entirely sure you want to use the "auto" flag to 
-        # class_weight here - this will up-weight positives, in this case!
-        
-        sgd = SGDClassifier(class_weight="auto")
-        clf = GridSearchCV(sgd, params_d, scoring='f1')
-        '''
         print "fitting model..."
-        
- 
         clf = SGDClassifier(class_weight="auto", shuffle=True, alpha=self.alpha)
         clf.fit(X, y, sample_weight=instance_weights)
         self.clf = clf
@@ -126,6 +116,7 @@ class ARModel():
     def set_params(self, **parameters):
         for parameter, value in parameters.items():
             setattr(self, parameter, value)
+        return self 
 
 def _generate_pseudo_examples(X, X_rationales, mu=1):
     print "-- generating instances for %s rationales --" % X_rationales.shape[0]
@@ -207,12 +198,23 @@ def proton_beam_example(model="rationales",
     for train, test in kf:
         if model == "rationales":
             clf = ARModel(X_pos_rationales, X_neg_rationales)
-            #clf.fit(X[train], y[train], X_pos_rationales, X_neg_rationales, 
-            #                    C, C_contrast_scalar=.1, mu=10.0)
-            alpha_vals = 10.0**-np.arange(1,6)
-            C_vals = 10.0**-np.arange(-3,0)
-            C_contrast_vals = 10.0**-np.arange(-3,0)
-            mu_vals = 10.0**-np.arange(-3,0)
+    
+            ''' 
+            @TODO Michael -- you'll want to do a broader search,
+                potentially, here I am severely limiting the 
+                search space. 
+            '''
+            # warning -- this is very, very slow!
+            #alpha_vals = 10.0**-np.arange(1,6)
+            #C_vals = 10.0**-np.arange(-3,0)
+            #C_contrast_vals = 10.0**-np.arange(-3,0)
+            #mu_vals = 10.0**-np.arange(-3,0)
+           
+            alpha_vals = 10.0**-np.arange(2,6)
+            C_vals = 10.0**-np.arange(0,1)
+            C_contrast_vals = 10.0**-np.arange(1,2)
+            mu_vals = 10.0**np.arange(1,3)
+
             params_d = {"alpha": alpha_vals, 
                         "C":C_vals, 
                         "C_contrast_scalar":C_contrast_vals,
@@ -251,5 +253,29 @@ def compute_measures(tp, fp, fn, tn):
      fmeasure = 2 * (specificity * sensitivity) / (specificity + sensitivity)
      return sensitivity, specificity, fmeasure
 
+
+if  __name__ =='__main__':
+    '''
+    Sample output:
+
+
+    ----
+    average results for model: rationales
+    sensitivity: 0.977915194346
+    specificity: 0.647058823529
+    F (sens/spec): 0.77880464328
+    ----
+
+    ----
+    average results for model: sgd
+    sensitivity: 0.9941643324
+    specificity: 0.468817204301
+    F (sens/spec): 0.637166404687
+    ----
+    '''
+    # first run fancier model -- this takes a bit of time
+    proton_beam_example()
+    # baseline 
+    proton_beam_example(model="sgd")
 
 

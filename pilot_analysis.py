@@ -3,11 +3,17 @@ import csv
 import pdb 
 import math 
 
+import numpy as np 
+
 from nltk import word_tokenize
+
 import pandas as pd 
+
+
 import sklearn 
 from sklearn.feature_extraction.text import TfidfVectorizer
-
+from sklearn.cross_validation import KFold
+from sklearn.grid_search import GridSearchCV
 import annotator_rationales as ar
 
 STOP_WORDS = [l.replace("\n", "") for l in open("pubmed.stoplist", 'rU').readlines()]
@@ -64,9 +70,20 @@ def flatten_rationales(all_rationales):
 
 
 
-def get_q_rationales(data, qnum):
+def get_q_rationales(data, qnum, pmids=None):
     pos_annotations_for_q = data[data["q%s"%qnum]=="Yes"]
     neg_annotations_for_q = data[data["q%s"%qnum]=="No"]
+
+    if pmids is not None:
+        # then only include those rationales associated with pmids of 
+        # interest
+        pos_annotations_for_q = \
+            pos_annotations_for_q[pos_annotations_for_q['documentId'].isin(pmids)]
+
+        neg_annotations_for_q = \
+            neg_annotations_for_q[neg_annotations_for_q['documentId'].isin(pmids)]
+        
+    
     
     pos_rationales = pos_annotations_for_q["q%skeys" % qnum].values
     # collapse into a single set
@@ -95,24 +112,78 @@ def rationales_exp():
     annotations = load_pilot_annotations()
     texts, pmids = load_texts_and_pmids()
     vectorizer = TfidfVectorizer(stop_words="english", min_df=3, max_features=50000)
+    # note that X and pmids will be aligned.
     X = vectorizer.fit_transform(texts)
+
+
     # these are sets of pmids that indicate positive instances;
     # all other instances are negative. these are final, abstract
     # level decisions (i.e., aggregate over the sub-questions)
-
     lvl1_pmids, lvl2_pmids = read_lbls()
-    for question_num in range(1,5):
 
-        ##
-        # now load in and encode the rationales
-        pos_rationales, neg_rationales = get_q_rationales(annotations, question_num)
-        # note that this technically gives us tfidf vectors, but we only use 
-        # these to look up non-zero entries anyway (otherwise tf-idf would be a
-        # little weird here)
-        X_pos_rationales = vectorizer.transform(pos_rationales)
-        X_neg_rationales = vectorizer.transform(neg_rationales)
 
-        pdb.set_trace()
+    ### 
+    # now generate folds
+    unique_labeled_pmids = list(set(annotations['documentId']))
+    folds = KFold(len(unique_labeled_pmids), n_folds=5)
+
+    for train_indices, test_indices in folds: 
+        train_pmids = np.array(unique_labeled_pmids)[train_indices].tolist()
+
+        ''' @TODO refactor into separate method ''' 
+        q_models = []
+        ### note that q2 is an integer (population size..)
+        ### so will ignore for now?
+        for question_num in range(1,5):
+            if question_num == 2:
+                # @TODO something else?
+                pass 
+            else:
+                ##
+                # now load in and encode the rationales
+                pos_rationales, neg_rationales = get_q_rationales(annotations, 
+                        question_num, pmids=train_pmids)
+                # note that this technically gives us tfidf vectors, but we only use 
+                # these to look up non-zero entries anyway (otherwise tf-idf would be a
+                # little weird here)
+                X_pos_rationales = vectorizer.transform(pos_rationales)
+                X_neg_rationales = vectorizer.transform(neg_rationales)
+
+                # recall that pmids aligns with X. 
+                train_indicators = np.in1d(pmids, train_pmids)
+                X_train = X[train_indicators]
+                X_test = X[np.logical_not(train_indicators)]
+
+                q_lbls = []
+                # build up a labels vector for this question, just using
+                # majority vote.
+                for pmid in train_pmids:
+                    q_decisions_for_pmid = \
+                        list(annotations[annotations['documentId'] == pmid]['q%s' % question_num].values)
+                    no_votes = q_decisions_for_pmid.count("No") # all other decisions we take as yes
+                    if no_votes > float(len(q_decisions_for_pmid))/2.0:
+                        q_lbls.append(-1)
+                    else:
+                        q_lbls.append(1)
+
+                
+                # ok, build the model already
+                # hyper-params first (for gridsearch)
+                alpha_vals = 10.0**-np.arange(2,6)
+                C_vals = 10.0**-np.arange(0,1)
+                C_contrast_vals = 10.0**-np.arange(1,2)
+                mu_vals = 10.0**np.arange(1,4)
+
+                params_d = {"alpha": alpha_vals, 
+                            "C":C_vals, 
+                            "C_contrast_scalar":C_contrast_vals,
+                            "mu":mu_vals}        
+
+                q_model = ar.ARModel(X_pos_rationales, X_neg_rationales)
+                clf = GridSearchCV(q_model, params_d, scoring='f1')
+                clf.fit(X_train, q_lbls)
+                pdb.set_trace()
+                # annotations[annotations['documentId'].isin(train_pmids)]['q1']
 '''
 def process_pilot_results(annotations_path = "pilot-data/pilotresults.csv"):
     annotations = pd.read_csv("pilot-data/pilotresults.csv", delimiter="|", header=None)

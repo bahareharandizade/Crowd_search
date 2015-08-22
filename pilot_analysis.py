@@ -14,7 +14,10 @@ import sklearn
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cross_validation import KFold
 from sklearn.grid_search import GridSearchCV
+from sklearn.linear_model import SGDClassifier 
+
 import annotator_rationales as ar
+
 
 STOP_WORDS = [l.replace("\n", "") for l in open("pubmed.stoplist", 'rU').readlines()]
 HEADERS = ['workerId', 'experimentId', 'hitId', 'documentId', 'q1', 'q2', 'q3', 'q4', 'q1keys', 'q2keys', 'q3keys', 'q4keys', 'q1cust', 'q2cust', 'q3cust', 'q4cust', 'q1_norationales_expl', 'q2_norationales_expl', 'q3_norationales_expl', 'q4_norationales_expl', 'q1_norationales_reverse', 'q2_norationales_reverse', 'q3_norationales_reverse', 'q4_norationales_reverse', 'comments', 'honeypotId', 'honeypotPass', 'qualificationTest', 'timeUsed', 'ts']
@@ -53,8 +56,11 @@ def load_texts_and_pmids(citations_and_labels_path="pilot-data/appendicitis.csv"
 def read_lbls(labels_path="pilot-data/labels.csv"):
     lbls = pd.read_csv(labels_path)
     # all of these pmids were screened in at the citation level.
-    lvl1_set = lbls["abstrackr_decision"]
-    lvl2_set = lbls["include?"]
+    #lbls["abstrackr_decision"]
+    lvl1_set = lbls[lbls["abstrackr_decision"].isin(["yes", "Yes"])]["PMID"].values 
+
+    lvl2_set = lbls[lbls["include?"].isin(["yes", "Yes"])]["PMID"].values
+    #pdb.set_trace()
     return lvl1_set, lvl2_set
 
 # do we need pmids? because we lose them here!
@@ -106,12 +112,12 @@ def get_q_rationales(data, qnum, pmids=None):
     #return pos_rationales, pos_pmids, neg_rationales, neg_pmids
     return list(set(pos_rationales)), list(set(neg_rationales))
 
-def rationales_exp():
+def rationales_exp(model="ar", n_folds=5):
     ##
     # basics: just load in the data + labels, vectorize
     annotations = load_pilot_annotations()
     texts, pmids = load_texts_and_pmids()
-    vectorizer = TfidfVectorizer(stop_words="english", min_df=3, max_features=50000)
+    vectorizer = TfidfVectorizer(stop_words="english", min_df=5, max_features=50000)
     # note that X and pmids will be aligned.
     X = vectorizer.fit_transform(texts)
 
@@ -125,20 +131,75 @@ def rationales_exp():
     ### 
     # now generate folds
     unique_labeled_pmids = list(set(annotations['documentId']))
-    folds = KFold(len(unique_labeled_pmids), n_folds=5)
+    folds = KFold(len(unique_labeled_pmids), n_folds=n_folds)
 
+    cm = np.zeros(4)
     for train_indices, test_indices in folds: 
         train_pmids = np.array(unique_labeled_pmids)[train_indices].tolist()
+        test_pmids  = np.array(unique_labeled_pmids)[test_indices].tolist()
+        test_y = []
+        for pmid in test_pmids:
+            lbl = 1 if pmid in lvl1_pmids else -1
+            test_y.append(lbl)
+        
+        test_y = np.array(test_y)
 
         ''' @TODO refactor into separate method ''' 
-        q_models = []
-        ### note that q2 is an integer (population size..)
-        ### so will ignore for now?
-        for question_num in range(1,5):
-            if question_num == 2:
-                # @TODO something else?
-                pass 
-            else:
+        q_models = get_q_models(annotations, X, pmids, train_pmids, vectorizer, model=model)
+        
+        # so this is a matrix 3 columns of predictions; one per question
+        # #of rows = # of test citations
+        q_predictions = np.matrix([np.array(q_m.predict(X[test_indices])) for q_m in q_models]).T
+
+        col_aggregates = np.array(np.sum(q_predictions, axis=1)>0).astype(np.integer) 
+        col_aggregates[col_aggregates<1]=-1
+        col_aggregates = col_aggregates[:,0]
+
+        cm += sklearn.metrics.confusion_matrix(test_y, col_aggregates).flatten()
+        #pdb.set_trace()
+
+    sensitivity, specificity, f = ar.compute_measures(*cm / float(n_folds))
+    
+    print "\n----"
+    print "average results for model: %s" % model 
+    print "cm: \n"
+
+    print cm/float(n_folds)
+    print "sensitivity: %s" % sensitivity
+    print "specificity: %s" % specificity
+    # not the traditional F; we use spec instead 
+    # of precision!
+    print "F (sens/spec): %s" % f  
+    print "----"
+
+def get_q_models(annotations, X, pmids, train_pmids, vectorizer, model="ar"):
+    q_models = []
+    ### note that q2 is an integer (population size..)
+    ### so will ignore for now?
+    for question_num in range(1,5):
+        if question_num == 2:
+            # @TODO something else?
+            pass 
+        else:
+            # recall that pmids aligns with X. 
+            train_indicators = np.in1d(pmids, train_pmids)
+            X_train = X[train_indicators]
+            X_test = X[np.logical_not(train_indicators)]
+
+            q_lbls = []
+            # build up a labels vector for this question, just using
+            # majority vote.
+            for pmid in train_pmids:
+                q_decisions_for_pmid = \
+                    list(annotations[annotations['documentId'] == pmid]['q%s' % question_num].values)
+                no_votes = q_decisions_for_pmid.count("No") # all other decisions we take as yes
+                if no_votes > float(len(q_decisions_for_pmid))/2.0:
+                    q_lbls.append(-1)
+                else:
+                    q_lbls.append(1)
+
+            if model == "ar":
+                # annotator rationale model
                 ##
                 # now load in and encode the rationales
                 pos_rationales, neg_rationales = get_q_rationales(annotations, 
@@ -149,24 +210,7 @@ def rationales_exp():
                 X_pos_rationales = vectorizer.transform(pos_rationales)
                 X_neg_rationales = vectorizer.transform(neg_rationales)
 
-                # recall that pmids aligns with X. 
-                train_indicators = np.in1d(pmids, train_pmids)
-                X_train = X[train_indicators]
-                X_test = X[np.logical_not(train_indicators)]
-
-                q_lbls = []
-                # build up a labels vector for this question, just using
-                # majority vote.
-                for pmid in train_pmids:
-                    q_decisions_for_pmid = \
-                        list(annotations[annotations['documentId'] == pmid]['q%s' % question_num].values)
-                    no_votes = q_decisions_for_pmid.count("No") # all other decisions we take as yes
-                    if no_votes > float(len(q_decisions_for_pmid))/2.0:
-                        q_lbls.append(-1)
-                    else:
-                        q_lbls.append(1)
-
-                
+            
                 # ok, build the model already
                 # hyper-params first (for gridsearch)
                 alpha_vals = 10.0**-np.arange(2,6)
@@ -180,9 +224,17 @@ def rationales_exp():
                             "mu":mu_vals}        
 
                 q_model = ar.ARModel(X_pos_rationales, X_neg_rationales)
-                clf = GridSearchCV(q_model, params_d, scoring='f1')
-                clf.fit(X_train, q_lbls)
-                pdb.set_trace()
+            else:
+                # baseline 
+                params_d = {"alpha": 10.0**-np.arange(1,7)}
+                q_model = SGDClassifier(class_weight="auto")
+
+            clf = GridSearchCV(q_model, params_d, scoring='f1')
+            clf.fit(X_train, q_lbls)
+            q_models.append(clf)
+
+    return q_models
+
                 # annotations[annotations['documentId'].isin(train_pmids)]['q1']
 '''
 def process_pilot_results(annotations_path = "pilot-data/pilotresults.csv"):

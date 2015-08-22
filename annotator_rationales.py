@@ -28,7 +28,8 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 class ARModel():
     '''
     For efficiency, we use SGD, so technically this is an approximation to, or 
-    variation of, the original Annotator Rationales model (which was SVM based).
+    variation of, the original Annotator Rationales model (which was SVM based)
+    -- although the objective is the same. 
     '''
     def __init__(self, X_pos_rationales, X_neg_rationales, 
                     C=1, C_contrast_scalar=.1, mu=10.0, alpha=0.01):
@@ -174,6 +175,7 @@ def proton_beam_example(model="rationales",
     ##
     # basics: just load in the data + labels, vectorize
     texts, labels, pmids = _load_data(data_path)
+    
     vectorizer = TfidfVectorizer(stop_words="english", min_df=3, max_features=50000)
     X = vectorizer.fit_transform(texts)
     y = np.array(labels)
@@ -213,7 +215,7 @@ def proton_beam_example(model="rationales",
             alpha_vals = 10.0**-np.arange(2,6)
             C_vals = 10.0**-np.arange(0,1)
             C_contrast_vals = 10.0**-np.arange(1,2)
-            mu_vals = 10.0**np.arange(1,3)
+            mu_vals = 10.0**np.arange(1,4)
 
             params_d = {"alpha": alpha_vals, 
                         "C":C_vals, 

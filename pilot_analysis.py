@@ -9,12 +9,13 @@ from nltk import word_tokenize
 
 import pandas as pd 
 
-
 import sklearn 
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cross_validation import KFold
 from sklearn.grid_search import GridSearchCV
 from sklearn.linear_model import SGDClassifier 
+from sklearn.cross_validation import StratifiedShuffleSplit
+from sklearn.svm import SVC
 
 import annotator_rationales as ar
 
@@ -72,6 +73,7 @@ def flatten_rationales(all_rationales):
     for s in all_rationales:
         rationales_flat.extend(csv.reader(StringIO.StringIO(s)).next())
         
+
     return rationales_flat
 
 
@@ -107,17 +109,29 @@ def get_q_rationales(data, qnum, pmids=None):
     #neg_pmids = neg_annotations_for_q["documentId"]
 
   
-    # collapse into a single set; note that we may want to revisit how we do
-    # this!
-    #return pos_rationales, pos_pmids, neg_rationales, neg_pmids
+    # collapse into a single set; note that this is basically
+    # the most naive means of combining rationales
     return list(set(pos_rationales)), list(set(neg_rationales))
+
+def get_SGD():
+    #C_range = np.logspace(-2, 10, 13)
+    return SGDClassifier(penalty=None, class_weight="auto")
+
+def get_svm(y):
+    C_range = np.logspace(-2, 10, 13)
+    gamma_range = np.logspace(-9, 3, 13)
+    param_grid = dict(gamma=gamma_range, C=C_range)
+    cv = StratifiedShuffleSplit(y, n_iter=5, test_size=0.2, random_state=42)
+    clf = GridSearchCV(SVC(class_weight="auto"), param_grid=param_grid, cv=cv, scoring="f1")
+
+    return clf
 
 def rationales_exp(model="ar", n_folds=5):
     ##
     # basics: just load in the data + labels, vectorize
     annotations = load_pilot_annotations()
     texts, pmids = load_texts_and_pmids()
-    vectorizer = TfidfVectorizer(stop_words="english", min_df=5, max_features=50000)
+    vectorizer = TfidfVectorizer(stop_words="english", ngram_range=(1,2), min_df=3, max_features=50000)
     # note that X and pmids will be aligned.
     X = vectorizer.fit_transform(texts)
 
@@ -137,25 +151,48 @@ def rationales_exp(model="ar", n_folds=5):
     for train_indices, test_indices in folds: 
         train_pmids = np.array(unique_labeled_pmids)[train_indices].tolist()
         test_pmids  = np.array(unique_labeled_pmids)[test_indices].tolist()
-        test_y = []
+        train_y, test_y = [], []
         for pmid in test_pmids:
             lbl = 1 if pmid in lvl1_pmids else -1
             test_y.append(lbl)
-        
         test_y = np.array(test_y)
 
-        ''' @TODO refactor into separate method ''' 
+        for pmid in train_pmids:
+            lbl = 1 if pmid in lvl1_pmids else -1 
+            train_y.append(lbl)
+        train_y = np.array(train_y)
+
         q_models = get_q_models(annotations, X, pmids, train_pmids, vectorizer, model=model)
         
+        
+        q_train = np.matrix([np.array(q_m.predict_proba(X[train_indices]))[:,1] for q_m in q_models]).T
+        #q_train = np.matrix([np.array(q_m.decision_function(X[train_indices])) for q_m in q_models]).T
+        #m = get_svm(train_y)
+        m = get_SGD()
+        #pdb.set_trace()
+
+        #pdb.set_trace()
+        print "fittting stacked model... "
+        m.fit(q_train, train_y)
+
+         
         # so this is a matrix 3 columns of predictions; one per question
         # #of rows = # of test citations
-        q_predictions = np.matrix([np.array(q_m.predict(X[test_indices])) for q_m in q_models]).T
+        
+        q_predictions = np.matrix([np.array(q_m.predict_proba(X[test_indices])[:,1]) for q_m in q_models]).T
+        #q_predictions = np.matrix([np.array(q_m.decision_function(X[test_indices])) for q_m in q_models]).T
+        aggregate_predictions = m.predict(q_predictions)
 
-        col_aggregates = np.array(np.sum(q_predictions, axis=1)>0).astype(np.integer) 
-        col_aggregates[col_aggregates<1]=-1
-        col_aggregates = col_aggregates[:,0]
 
-        cm += sklearn.metrics.confusion_matrix(test_y, col_aggregates).flatten()
+        #pdb.set_trace()
+        
+        # stack these in a simple logistic
+
+        #col_aggregates = np.array(np.sum(q_predictions, axis=1)>0).astype(np.integer) 
+        #col_aggregates[col_aggregates<1]=-1
+        #col_aggregates = col_aggregates[:,0]
+
+        cm += sklearn.metrics.confusion_matrix(test_y, aggregate_predictions).flatten()
         #pdb.set_trace()
 
     sensitivity, specificity, f = ar.compute_measures(*cm / float(n_folds))
@@ -213,9 +250,9 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer, model="ar"):
             
                 # ok, build the model already
                 # hyper-params first (for gridsearch)
-                alpha_vals = 10.0**-np.arange(2,6)
-                C_vals = 10.0**-np.arange(0,1)
-                C_contrast_vals = 10.0**-np.arange(1,2)
+                alpha_vals = 10.0**-np.arange(1,7)
+                C_vals = 10.0**-np.arange(0,4)
+                C_contrast_vals = 10.0**-np.arange(1,4)
                 mu_vals = 10.0**np.arange(1,4)
 
                 params_d = {"alpha": alpha_vals, 
@@ -223,15 +260,23 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer, model="ar"):
                             "C_contrast_scalar":C_contrast_vals,
                             "mu":mu_vals}        
 
-                q_model = ar.ARModel(X_pos_rationales, X_neg_rationales)
+                # note that you pass in the training data here, which is a little
+                # weird and deviates from the usual sklearn way of doing things,
+                # because this makes generating and keeping the rationales around
+                # much more efficient
+                q_model = ar.ARModel(X_pos_rationales, X_neg_rationales, loss="log")
+                print "cv fitting!!"
+                q_model.cv_fit(X_train, q_lbls, alpha_vals, C_vals, C_contrast_vals, mu_vals)
+                q_models.append(q_model)
+                #q_model = ar.ARModel(X_pos_rationales, X_neg_rationales, loss="log")
             else:
                 # baseline 
                 params_d = {"alpha": 10.0**-np.arange(1,7)}
-                q_model = SGDClassifier(class_weight="auto")
+                q_model = SGDClassifier(class_weight="auto", loss="log")
 
-            clf = GridSearchCV(q_model, params_d, scoring='f1')
-            clf.fit(X_train, q_lbls)
-            q_models.append(clf)
+                clf = GridSearchCV(q_model, params_d, scoring='f1')
+                clf.fit(X_train, q_lbls)
+                q_models.append(clf)
 
     return q_models
 

@@ -10,6 +10,7 @@ Author: byron wallace
 '''
 import pdb
 import csv 
+from itertools import product
 
 import scipy as sp 
 import numpy as np 
@@ -32,7 +33,8 @@ class ARModel():
     -- although the objective is the same. 
     '''
     def __init__(self, X_pos_rationales, X_neg_rationales, 
-                    C=1, C_contrast_scalar=.1, mu=10.0, alpha=0.01):
+                    C=1, C_contrast_scalar=.1, mu=1.0, alpha=0.01, 
+                    loss="log"):
         '''
         Instantiate an Annotators' rationales model.
 
@@ -45,18 +47,115 @@ class ARModel():
         '''
         self.X_pos_rationales = X_pos_rationales
         self.X_neg_rationales = X_neg_rationales
-
+        
         self.C = 1
         self.C_contrast_scalar = C_contrast_scalar
         self.mu = mu
         self.alpha = alpha
 
+        self.loss = loss
+        print "loss: %s" % (self.loss)
+
+
+    def cv_fit(self, X, y, alpha_vals, C_vals, C_contrast_vals, mu_vals):
+        '''
+        brute force (grid search) over hyper-parameters.
+        '''
+        best_params = np.zeros(4) # assume alpha, C, C_contrast, mu
+        best_score = np.inf
+
+        self.pos_pseudo_examples = _generate_pseudo_examples(X, self.X_pos_rationales, 1)
+        self.neg_pseudo_examples = _generate_pseudo_examples(X, self.X_neg_rationales, 1)
+
+        y = np.array(y)
+
+        for cur_alpha, cur_C, cur_C_contrast_scalar, cur_mu in product(alpha_vals, 
+                                                        C_vals, C_contrast_vals, mu_vals):
+            kf = KFold(X.shape[0], n_folds=5)
+            scores_for_params = []
+            for nested_train, nested_test in kf:
+                
+                cur_X_train = X[nested_train,:] 
+                #pdb.set_trace()
+                cur_y_train = y[nested_train]
+
+                cur_X_test = X[nested_test,:]
+                cur_y_test = y[nested_test]
+
+                # standard C for non-contrastive instances
+                instance_weights = np.ones(cur_X_train.shape[0]) * self.C
+
+                # now append pseudo instances to the training data!
+                # note that we scale these by cur_mu!
+                cur_X_train = sp.sparse.vstack((cur_X_train, self.pos_pseudo_examples/cur_mu))
+                cur_y_train = np.hstack((cur_y_train, np.ones(self.pos_pseudo_examples.shape[0])))
+
+                cur_X_train = sp.sparse.vstack((cur_X_train, self.neg_pseudo_examples/cur_mu))
+                cur_y_train = np.hstack((cur_y_train, -1*np.ones(self.neg_pseudo_examples.shape[0])))
+                
+                total_contrastive_count = self.pos_pseudo_examples.shape[0] + self.neg_pseudo_examples.shape[0]
+                cur_instance_weights = np.hstack((instance_weights, 
+                                        np.ones(total_contrastive_count) * cur_C * cur_C_contrast_scalar))
+
+                clf = SGDClassifier(class_weight="auto", loss=self.loss, shuffle=True, alpha=cur_alpha)
+                clf.fit(cur_X_train, cur_y_train, sample_weight=cur_instance_weights)
+
+                preds = clf.predict(cur_X_test)
+                # we convert to 0/1 loss here
+                errors = np.abs((1+cur_y_test)/2.0 - (1+preds)/2.0)
+                
+                # auto-set weights to equal
+                lambda_ = len(cur_y_test[cur_y_test<=0])/float(len(cur_y_test[cur_y_test>0]))
+                #print "errors: %s; lambda: %s" % (errors, lambda_)
+                
+                errors[cur_y_test==1] = errors[cur_y_test==1]*lambda_
+                #pdb.set_trace()
+                cur_score = np.sum(errors)
+                scores_for_params.append(cur_score)
+
+            #print "average score is %s for mu: %s; alpha: %s; C: %s, C_contrast_scalar: %s" % (
+            #        np.mean(scores_for_params), cur_mu, cur_alpha, cur_C, cur_C_contrast_scalar)
+            if np.mean(scores_for_params) < best_score:
+                best_score = np.mean(scores_for_params)
+                mu_star = cur_mu
+                alpha_star = cur_alpha
+                C_star = cur_C 
+                C_contrast_scalar_star = cur_C_contrast_scalar
+                print "new best parameters with score: %s -- mu: %s; alpha: %s; C: %s, C_contrast_scalar: %s" % (
+                        best_score, mu_star, alpha_star, C_star, C_contrast_scalar_star)
+
+        print "ok -- best parameters: mu: %s; alpha: %s; C: %s, C_contrast_scalar: %s" % (
+                        mu_star, alpha_star, C_star, C_contrast_scalar_star)
+        print "score: %s" % best_score
+
+        ###
+        # now fit final model
+        print "fitting final model to all data.."
+        
+        instance_weights = np.ones(X.shape[0]) * C_star
+
+        # now append pseudo instances to the training data!
+        # note that we scale these by cur_mu!
+        X = sp.sparse.vstack((X, self.pos_pseudo_examples/mu_star))
+        y = np.hstack((y, np.ones(self.pos_pseudo_examples.shape[0])))
+
+        X = sp.sparse.vstack((X, self.neg_pseudo_examples/mu_star))
+        y = np.hstack((y, -1*np.ones(self.neg_pseudo_examples.shape[0])))
+        
+        total_contrastive_count = self.pos_pseudo_examples.shape[0] + self.neg_pseudo_examples.shape[0]
+        instance_weights = np.hstack((instance_weights, 
+                                np.ones(total_contrastive_count) * C_star * C_contrast_scalar_star))
+
+        clf = SGDClassifier(class_weight="auto", loss=self.loss, shuffle=True, alpha=alpha_star)
+        clf.fit(X, y, sample_weight=instance_weights)
+        self.clf = clf
 
     def fit(self, X, y):
         '''
         Fit the annotator rationales model using the provided training 
         data + rationales. 
 
+        NOTE there is a small problem here; 
         Parameters
         ----------
         X : {array-like, sparse matrix}, shape = (n_samples, n_features)
@@ -77,29 +176,41 @@ class ARModel():
         # @TODO this is slow/inefficient, because we re-generate
         # these every single time -- it would be better, for a given
         # train/test split, to cache
-        ####
-        pos_pseudo_examples = _generate_pseudo_examples(X, self.X_pos_rationales, self.mu)
-        neg_pseudo_examples = _generate_pseudo_examples(X, self.X_neg_rationales, self.mu)
+        # 
+        # Note that there is arguably a small(?) issue here when you instantiate
+        # this and then subsequently rely on GridSearch; namely you will 
+        # be using pseudo examples generated from instances that are not in 
+        # the (nested) training set during the tuning, which could
+        # conceivably lead to overfitting. I suppose you *should* only use those
+        # rationales associated with instances in the nested train set...
+        # ignoring for now.
+        if self.pos_pseudo_examples is None:
+            self.pos_pseudo_examples = _generate_pseudo_examples(X, self.X_pos_rationales, self.mu)
+            self.neg_pseudo_examples = _generate_pseudo_examples(X, self.X_neg_rationales, self.mu)
+
+        #pos_pseudo_examples = _generate_pseudo_examples(X, self.X_pos_rationales, self.mu)
+        #neg_pseudo_examples = _generate_pseudo_examples(X, self.X_neg_rationales, self.mu)
 
         # standard C for non-contrastive instances
         instance_weights = np.ones(X.shape[0]) * self.C
 
         ###
         # now append pseudo instances to the training data!
-        X = sp.sparse.vstack((X, pos_pseudo_examples))
-        y = np.hstack((y, np.ones(pos_pseudo_examples.shape[0])))
+        X = sp.sparse.vstack((X, self.pos_pseudo_examples))
+        y = np.hstack((y, np.ones(self.pos_pseudo_examples.shape[0])))
 
-        X = sp.sparse.vstack((X, neg_pseudo_examples))
-        y = np.hstack((y, -1*np.ones(neg_pseudo_examples.shape[0])))
+        X = sp.sparse.vstack((X, self.neg_pseudo_examples))
+        y = np.hstack((y, -1*np.ones(self.neg_pseudo_examples.shape[0])))
         
-        total_contrastive_count = pos_pseudo_examples.shape[0] + neg_pseudo_examples.shape[0]
+        total_contrastive_count = self.pos_pseudo_examples.shape[0] + self.neg_pseudo_examples.shape[0]
         instance_weights = np.hstack((instance_weights, 
                                 np.ones(total_contrastive_count) * self.C * self.C_contrast_scalar))
 
         print "all finished generating contrastive instances."
 
         print "fitting model..."
-        clf = SGDClassifier(class_weight="auto", shuffle=True, alpha=self.alpha)
+
+        clf = SGDClassifier(class_weight="auto", loss=self.loss, shuffle=True, alpha=self.alpha)
         clf.fit(X, y, sample_weight=instance_weights)
         self.clf = clf
         print "ok. done."
@@ -107,6 +218,12 @@ class ARModel():
     def predict(self, X):
         # just wrap up the SGD call..
         return self.clf.predict(X)
+
+    def predict_proba(self, X):
+        try:
+            return self.clf.predict_proba(X)
+        except:
+            pdb.set_trace()
 
     def get_params(self, deep=True):
         #return {"alpha": self.alpha, "recursive": self.recursive}
@@ -118,6 +235,7 @@ class ARModel():
         for parameter, value in parameters.items():
             setattr(self, parameter, value)
         return self 
+
 
 def _generate_pseudo_examples(X, X_rationales, mu=1):
     print "-- generating instances for %s rationales --" % X_rationales.shape[0]
@@ -175,7 +293,7 @@ def proton_beam_example(model="rationales",
     ##
     # basics: just load in the data + labels, vectorize
     texts, labels, pmids = _load_data(data_path)
-    
+
     vectorizer = TfidfVectorizer(stop_words="english", min_df=3, max_features=50000)
     X = vectorizer.fit_transform(texts)
     y = np.array(labels)
@@ -251,7 +369,7 @@ def proton_beam_example(model="rationales",
 def compute_measures(tp, fp, fn, tn):
      sensitivity = tp / (tp + fn)
      specificity = tn / (tn + fp)
-
+     precision   = tp / (tp + fp)
      fmeasure = 2 * (specificity * sensitivity) / (specificity + sensitivity)
      return sensitivity, specificity, fmeasure
 

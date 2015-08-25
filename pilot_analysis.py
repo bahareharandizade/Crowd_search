@@ -77,6 +77,31 @@ def flatten_rationales(all_rationales):
     return rationales_flat
 
 
+def get_M_q(data, qnum, pmids=None):
+    '''
+    returns an |pmids| x |workers| matrix, where 
+    columns are worker responses; also provides 
+    list that maps worker ids to columns. 
+    '''
+
+    q_annotations = annotations = data[["q%s"%qnum, "documentId", "workerId"]]
+    if pmids is not None:
+        q_annotations = q_annotations[q_annotations['documentId'].isin(pmids)]
+
+    pivoted = q_annotations.pivot(index="documentId", columns="workerId")
+    '''
+    we use these kind of wacky labels because the pyanno library
+    seems to prefer integers...  
+    '''
+    pivoted.replace("CantTell", 4, inplace=True)
+    pivoted.replace(["Yes", "yes"], 5, inplace=True)
+    pivoted.replace(["No", "no"], 3, inplace=True)
+
+    pivoted = pivoted.fillna(2)
+    workers = list(pivoted["q%s"%qnum].keys()) # this preserves order
+    # matrix 
+    m = pd.DataFrame.as_matrix(pivoted["q%s"%qnum])
+    return m, workers
 
 def get_q_rationales(data, qnum, pmids=None):
     pos_annotations_for_q = data[data["q%s"%qnum]=="Yes"]
@@ -108,7 +133,6 @@ def get_q_rationales(data, qnum, pmids=None):
     #pos_pmids = pos_annotations_for_q["documentId"]
     #neg_pmids = neg_annotations_for_q["documentId"]
 
-  
     # collapse into a single set; note that this is basically
     # the most naive means of combining rationales
     return list(set(pos_rationales)), list(set(neg_rationales))

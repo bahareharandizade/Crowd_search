@@ -32,7 +32,9 @@ class ARModel():
     variation of, the original Annotator Rationales model (which was SVM based)
     -- although the objective is the same. 
     '''
-    def __init__(self, X_pos_rationales, X_neg_rationales, 
+    def __init__(self, X_pos_rationales, X_neg_rationales,  
+                    pos_rationales_worker_ids=None, neg_rationales_worker_ids=None, 
+                    worker_qualities=None,
                     C=1, C_contrast_scalar=.1, mu=1.0, alpha=0.01, 
                     loss="log"):
         '''
@@ -44,10 +46,16 @@ class ARModel():
             for `positive' instances. Crucially, we assume that these have 
             been encoded using the same vectorizer as the X_i's. 
         X_neg_rationales : Ditto the above, for negative rationales.
+        pos_rationales_worker_ids : Identifiers of the workers who provided the rationales
+        worker_qualities: Basically, how much to scale contributions
         '''
         self.X_pos_rationales = X_pos_rationales
         self.X_neg_rationales = X_neg_rationales
         
+        self.pos_worker_ids = pos_rationales_worker_ids
+        self.neg_worker_ids = neg_rationales_worker_ids
+        self.worker_qualities = worker_qualities
+
         self.C = 1
         self.C_contrast_scalar = C_contrast_scalar
         self.mu = mu
@@ -64,8 +72,15 @@ class ARModel():
         best_params = np.zeros(4) # assume alpha, C, C_contrast, mu
         best_score = np.inf
 
-        self.pos_pseudo_examples = _generate_pseudo_examples(X, self.X_pos_rationales, 1)
-        self.neg_pseudo_examples = _generate_pseudo_examples(X, self.X_neg_rationales, 1)
+        ###
+        # also keep track of the workers associated with each
+        # rational instance!
+        self.pos_pseudo_examples, self.psuedo_pos_workers = _generate_pseudo_examples(
+                                                                X, self.X_pos_rationales,  
+                                                                self.pos_worker_ids,  1)
+        self.neg_pseudo_examples, self.psuedo_neg_workers = _generate_pseudo_examples(
+                                                                X, self.X_neg_rationales,
+                                                                self.neg_worker_ids, 1)
 
         y = np.array(y)
 
@@ -85,17 +100,37 @@ class ARModel():
                 # standard C for non-contrastive instances
                 instance_weights = np.ones(cur_X_train.shape[0]) * self.C
 
+                
                 # now append pseudo instances to the training data!
                 # note that we scale these by cur_mu!
                 cur_X_train = sp.sparse.vstack((cur_X_train, self.pos_pseudo_examples/cur_mu))
                 cur_y_train = np.hstack((cur_y_train, np.ones(self.pos_pseudo_examples.shape[0])))
 
+
                 cur_X_train = sp.sparse.vstack((cur_X_train, self.neg_pseudo_examples/cur_mu))
                 cur_y_train = np.hstack((cur_y_train, -1*np.ones(self.neg_pseudo_examples.shape[0])))
                 
                 total_contrastive_count = self.pos_pseudo_examples.shape[0] + self.neg_pseudo_examples.shape[0]
-                cur_instance_weights = np.hstack((instance_weights, 
-                                        np.ones(total_contrastive_count) * cur_C * cur_C_contrast_scalar))
+                #cur_instance_weights = np.hstack((instance_weights, 
+                #                        np.ones(total_contrastive_count) * cur_C * cur_C_contrast_scalar))
+                contrast_weights = np.ones(total_contrastive_count) * cur_C * cur_C_contrast_scalar
+                
+             
+                if self.worker_qualities is not None: 
+                    # then also scale by worker quality!
+                    for i in xrange(self.pos_pseudo_examples.shape[0]):
+                        worker_id = self.psuedo_pos_workers[i]#self.pos_worker_ids[i]
+                        worker_quality = self.worker_qualities[worker_id]
+                        contrast_weights[i] = contrast_weights[i] #* (worker_quality**2)
+
+                    for i in xrange(self.neg_pseudo_examples.shape[0]):
+                        worker_id = self.psuedo_neg_workers[i]#self.neg_worker_ids[i]
+                        worker_quality = self.worker_qualities[worker_id] 
+                        cur_idx = self.pos_pseudo_examples.shape[0]+i
+                        contrast_weights[cur_idx] = contrast_weights[cur_idx] #* (worker_quality**2)
+                   
+                
+                cur_instance_weights = np.hstack((instance_weights, contrast_weights))
 
                 clf = SGDClassifier(class_weight="auto", loss=self.loss, shuffle=True, alpha=cur_alpha)
                 clf.fit(cur_X_train, cur_y_train, sample_weight=cur_instance_weights)
@@ -143,8 +178,25 @@ class ARModel():
         y = np.hstack((y, -1*np.ones(self.neg_pseudo_examples.shape[0])))
         
         total_contrastive_count = self.pos_pseudo_examples.shape[0] + self.neg_pseudo_examples.shape[0]
-        instance_weights = np.hstack((instance_weights, 
-                                np.ones(total_contrastive_count) * C_star * C_contrast_scalar_star))
+        contrast_weights = np.ones(total_contrastive_count) * C_star * C_contrast_scalar_star
+
+      
+        if self.worker_qualities is not None: 
+            # then also scale by worker quality!
+            for i in xrange(self.pos_pseudo_examples.shape[0]):
+                worker_id = self.psuedo_pos_workers[i]#self.pos_worker_ids[i]
+                worker_quality = self.worker_qualities[worker_id]
+                contrast_weights[i] = contrast_weights[i] #* (worker_quality**2)
+
+            for i in xrange(self.neg_pseudo_examples.shape[0]):
+                worker_id = self.psuedo_neg_workers[i]#self.neg_worker_ids[i]
+                worker_quality = self.worker_qualities[worker_id] 
+                cur_idx = self.pos_pseudo_examples.shape[0]+i
+                contrast_weights[cur_idx] = contrast_weights[cur_idx] #* (worker_quality**2)
+      
+        
+
+        instance_weights = np.hstack((instance_weights, contrast_weights))
 
         clf = SGDClassifier(class_weight="auto", loss=self.loss, shuffle=True, alpha=alpha_star)
         clf.fit(X, y, sample_weight=instance_weights)
@@ -237,10 +289,11 @@ class ARModel():
         return self 
 
 
-def _generate_pseudo_examples(X, X_rationales, mu=1):
+def _generate_pseudo_examples(X, X_rationales, rationale_worker_ids=None, mu=1):
     print "-- generating instances for %s rationales --" % X_rationales.shape[0]
 
     contrast_instances = []
+    workers = []
 
     ##
     # iterate over training data, figure out which instances
@@ -253,16 +306,23 @@ def _generate_pseudo_examples(X, X_rationales, mu=1):
         for j in xrange(X_rationales.shape[0]):
             rationale_j_nonzero = X_rationales[j].nonzero()[1]
             shared_nonzero_indices = np.intersect1d(X_i_nonzero, rationale_j_nonzero)
-
-            if shared_nonzero_indices.shape[0] > 0:
+            worker = None 
+            if rationale_worker_ids is not None: 
+                worker = rationale_worker_ids[j]
+            
+            ### TMP TMP TMP
+            #if shared_nonzero_indices.shape[0] > 0:
+            #pdb.set_trace()
+            if shared_nonzero_indices.shape[0] == rationale_j_nonzero.shape[0]: # experimental!
                 # then introduce a contrast instance!
                 # i.e., maske out rationale
+                #print "ah ha!"
                 pseudoexample = X[i].copy()
                 pseudoexample[0,shared_nonzero_indices] = 0
 
                 contrast_instances.append(pseudoexample/mu)
-
-    return sp.sparse.vstack(contrast_instances)
+                workers.append(worker)
+    return sp.sparse.vstack(contrast_instances), workers
 
 def _load_data(path):
     texts, labels, pmids = [], [], []
@@ -313,7 +373,7 @@ def proton_beam_example(model="rationales",
     sensitivities, specificities = [], []
 
     C = 1
-    kf = KFold(X.shape[0], n_folds=5)
+    kf = KFold(X.shape[0], n_folds=5, random_state=10)
     cm = np.zeros(len(np.unique(y)) ** 2)
     for train, test in kf:
         if model == "rationales":
@@ -370,7 +430,8 @@ def compute_measures(tp, fp, fn, tn):
      sensitivity = tp / (tp + fn)
      specificity = tn / (tn + fp)
      precision   = tp / (tp + fp)
-     fmeasure = 2 * (specificity * sensitivity) / (specificity + sensitivity)
+     #fmeasure = 2 * (specificity * sensitivity) / (specificity + sensitivity)
+     fmeasure = 2 * (precision * sensitivity) / (precision + sensitivity)
      return sensitivity, specificity, fmeasure
 
 

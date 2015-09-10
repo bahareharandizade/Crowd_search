@@ -43,9 +43,9 @@ def load_texts_and_pmids(citations_and_labels_path="pilot-data/appendicitis.csv"
         if isinstance(title, float): 
             title_tokens = []
         else:
-            title_tokens =  word_tokenize(title)
+            title_tokens =  word_tokenize(title.decode('utf-8'))
 
-        abstract_tokens = word_tokenize(abstract)
+        abstract_tokens = word_tokenize(abstract.decode('utf-8'))
         ### 
         # not differentiating between titles and abstracts for now, 
         # or possibly ever, because this complicates the rationales

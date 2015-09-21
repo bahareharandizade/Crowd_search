@@ -226,9 +226,14 @@ def get_q_rationales(data, qnum, pmids=None):
     return list(set(pos_rationales)), list(set(neg_rationales))
 '''
 
-def get_SGD():
+def get_SGD(class_weight="auto", loss="log"):
     #C_range = np.logspace(-2, 10, 13)
-    return SGDClassifier(penalty=None, class_weight="auto")
+    #return SGDClassifier(penalty=None)#, class_weight="auto")
+    params_d = {"alpha": 10.0**-np.arange(0,7)}
+    q_model = SGDClassifier(class_weight=class_weight, loss=loss)
+
+    clf = GridSearchCV(q_model, params_d, scoring='f1')
+    return clf 
 
 def get_svm(y):
     C_range = np.logspace(-2, 10, 13)
@@ -239,6 +244,239 @@ def get_svm(y):
 
     return clf
 
+
+def cartesian(arrays, out=None):
+    """
+    Generate a cartesian product of input arrays.
+
+    Parameters
+    ----------
+    arrays : list of array-like
+        1-D arrays to form the cartesian product of.
+    out : ndarray
+        Array to place the cartesian product in.
+
+    Returns
+    -------
+    out : ndarray
+        2-D array of shape (M, len(arrays)) containing cartesian products
+        formed of input arrays.
+
+    Examples
+    --------
+    >>> cartesian(([1, 2, 3], [4, 5], [6, 7]))
+    array([[1, 4, 6],
+           [1, 4, 7],
+           [1, 5, 6],
+           [1, 5, 7],
+           [2, 4, 6],
+           [2, 4, 7],
+           [2, 5, 6],
+           [2, 5, 7],
+           [3, 4, 6],
+           [3, 4, 7],
+           [3, 5, 6],
+           [3, 5, 7]])
+
+    """
+
+    arrays = [np.asarray(x) for x in arrays]
+    dtype = arrays[0].dtype
+
+    n = np.prod([x.size for x in arrays])
+    if out is None:
+        out = np.zeros([n, len(arrays)], dtype=dtype)
+
+    m = n / arrays[0].size
+    out[:,0] = np.repeat(arrays[0], m)
+    if arrays[1:]:
+        cartesian(arrays[1:], out=out[0:m,1:])
+        for j in xrange(1, arrays[0].size):
+            out[j*m:(j+1)*m,1:] = out[0:m,1:]
+    return out
+
+
+
+def rationales_exp_all_train(model="ar", use_worker_qualities=False):
+    ##
+    # basics: just load in the data + labels, vectorize
+    annotations = load_protonbeam_annotations()
+    lvl1_pmids, lvl2_pmids = read_lbls()
+    # we'll use all crowd annotated data as training.
+    train_pmids = list(set(annotations['documentId'].values))
+    texts, pmids = load_texts_and_pmids()
+    train_indices, test_indices = [], []
+    train_y, test_y = [], []
+
+
+    for i, pmid in enumerate(pmids):    
+
+        if pmid in train_pmids:
+            '''
+            train_indices.append(i) 
+            if pmid in lvl1_pmids:
+                train_y.append(1)
+            else: 
+                train_y.append(-1)
+            '''
+            
+            '''
+            figure out each label 
+            '''
+
+            q_decisions_for_pmid = annotations[annotations['documentId'] == pmid]
+            for worker, question_answers in q_decisions_for_pmid.groupby("workerId"):
+                # calculate the 'effective' label given by this worker,
+                # as a function of their question decisions
+                
+                question_answers = question_answers[['q1', 'q2', 'q3']].values[0]
+                final_answer = -1 if "No" in question_answers else 1 
+
+                train_y.append(final_answer)
+                train_indices.append(i) # repeat the instance
+        else:    
+            ###
+            # bcw: note! we are *training* with respect
+            # to level-1 labels, but then *testing* with
+            # respect to level-2, which in practice makes
+            # sense, but might seem a little odd to others.
+            # in the past, we've trained and tested on
+            # just level 1 to keep things simple. 
+            test_indices.append(i)
+            # if pmid in lvl2_pmids:
+            if pmid in lvl1_pmids:
+                test_y.append(1)
+            else:
+                test_y.append(-1)
+    
+    vectorizer = TfidfVectorizer(stop_words="english", ngram_range=(1,2), min_df=3, max_features=50000)
+    
+    X_all = vectorizer.fit_transform(texts)
+    X_train = X_all[train_indices]
+    X_test = X_all[test_indices]
+    #pdb.set_trace()
+    test_y = np.array(test_y)
+    train_y = np.array(train_y)
+    
+    if not "grouped" in model: 
+        q_models = get_q_models(annotations, X_all, pmids, train_pmids, 
+                                vectorizer, model=model, 
+                                use_worker_qualities=use_worker_qualities)        
+        
+        q_train = np.matrix([np.array(q_m.predict_proba(X_train))[:,1] for q_m in q_models]).T
+
+        #q1_preds =  q_models[0].predict(X_test) #np.matrix([q_m.predict(X_train) for q_m in q_models]).T
+        #aggregate_predictions = q1_preds
+      
+       
+        params_d = {"alpha": 10.0**-np.arange(0,7)}
+        #class_weight="auto",  further boosts sensitivity...
+        q_model = SGDClassifier(class_weight="auto", loss="hinge")
+        m = GridSearchCV(q_model, params_d, scoring='f1')
+
+        #m = get_SGD()
+        print "fittting stacked model... "
+        #pdb.set_trace()
+
+        # do not use expert labels in training!!! FOR EITHER 
+        # MODEL
+        '''
+        And now for extremely naive/slow model fitting!
+        '''
+        '''
+        lambda_ = 1
+        alpha_vals = np.linspace(.2,.8,25)
+        beta_vals = np.linspace(.2,.8,25)
+        gamma_vals = np.linspace(.1,.8,25)
+        a_star, b_star, g_star = None, None, None 
+        best_score, best_sens, best_spec = -np.inf, -np.inf, -np.inf
+        for a, b, g in cartesian([alpha_vals, beta_vals, gamma_vals]):
+            #preds = ((q_train[:,0] > a) & ((q_train[:,1] > b) | (q_train[:,2] > g)))
+            preds = ((q_train[:,0] > a) & (q_train[:,1] > b) & (q_train[:,2] > g))
+
+            #preds = q_train[:,0] > a
+            preds = np.array(map(lambda x: 1 if x else -1, preds))
+            sens = sklearn.metrics.accuracy_score(train_y[train_y>0], preds[train_y>0])
+            spec = sklearn.metrics.accuracy_score(train_y[train_y<=0], preds[train_y<=0])
+            
+            cur_score = lambda_ * sens + spec 
+            
+            if cur_score > best_score:
+                a_star, b_star, g_star = a, b, g 
+                best_score = cur_score
+                best_sens = sens 
+                best_spec = spec 
+        
+        '''
+        
+        #pdb.set_trace()
+
+        # so this is a matrix 3 columns of predictions; one per question
+        # #of rows = # of test citations
+        #q_predictions = np.matrix([np.array(q_m.predict_proba(X_test)[:,1]) for q_m in q_models]).T
+        #pdb.set_trace()
+        q_predictions = np.matrix([np.array(q_m.predict(X_test)) for q_m in q_models]).T
+
+        # stacking aggregation
+        #m.fit(q_train, train_y)
+        #aggregate_predictions = m.predict(q_predictions)
+
+        #q_predictions = np.matrix([np.array(q_m.decision_function(X[test_indices])) for q_m in q_models]).T
+        
+        # this is the OR approach for q's 2&3
+        #aggregate_predictions = ((q_predictions[:,0] > a_star) & ((q_predictions[:,1] > b_star) | (q_predictions[:,2] > g_star)))
+        
+        # standard AND aggregation
+        #aggregate_predictions = ((q_predictions[:,0] > a_star) & (q_predictions[:,1] > b_star) & (q_predictions[:,2] > g_star))
+        #aggregate_predictions = np.array(map(lambda x: 1 if x else -1, aggregate_predictions ))
+        #aggregate_predictions = ((q_predictions[:,0] >= .5) & (
+        #                            q_predictions[:,1] >= .5) & (q_predictions[:,2] >= .5))
+        #aggregate_predictions = ((q_predictions[:,0] > 0) & 
+        #                           (q_predictions[:,1] > 0) & (q_predictions[:,2] >= 0))
+        
+        aggregate_predictions = (q_predictions[:,0] + q_predictions[:,1] + q_predictions[:,2]) >= 3
+        aggregate_predictions = np.array(map(lambda x: 1 if x else -1, aggregate_predictions ))
+        
+        #
+        #pdb.set_trace()
+    else:
+        if model == "grouped":
+            # grouped model; simpler case
+            m = get_SGD(loss="hinge")
+            m.fit(X_train, train_y)
+            #m.fit(X[train_indices], train_y)
+            aggregate_predictions = m.predict(X_test)
+        else: 
+            # grouped *with rationales* 
+            m = get_grouped_rationales_model(
+                annotations, X_all, train_y, pmids, 
+                train_pmids, train_indices, vectorizer, 
+                use_worker_qualities=use_worker_qualities) 
+            
+            aggregate_predictions = m.predict(X_test)
+    
+    
+    cm = sklearn.metrics.confusion_matrix(test_y, aggregate_predictions).flatten()
+    #pdb.set_trace()
+    tn, fp, fn, tp = cm 
+
+    # tp, fp, fn, tn
+    #sensitivity, specificity, f = ar.compute_measures(*cm / float(n_folds))
+    sensitivity, specificity, f= ar.compute_measures(tp, fp, fn, tn)
+
+    print "!!! WARNING YOU ARE USING LEVEL-2 FOR EVALUATION AND LEVEL-1 FOR TRAINING !!!"
+    print "results on test set for model: %s." % model 
+    print "using worker quality estimates? %s" % use_worker_qualities
+    print "\n----" 
+
+    print "tn, fp, fn, tp"
+    print cm
+    print "sensitivity: %s" % sensitivity
+    print "specificity: %s" % specificity
+    # not the traditional F; we use spec instead 
+    # of precision!
+    print "F: %s" % f  
+    print "----"
 
 def rationales_exp(model="ar", n_folds=5, use_worker_qualities=False):
     '''
@@ -329,8 +567,9 @@ def rationales_exp(model="ar", n_folds=5, use_worker_qualities=False):
 
 
     #pdb.set_trace()
-    tn, fp, fn, tp = cm / float(n_folds)
-
+    tn, fp, fn, tp = cm #/ float(n_folds)
+    pdb.set_trace()
+    # tp, fp, fn, tn
     #sensitivity, specificity, f = ar.compute_measures(*cm / float(n_folds))
     sensitivity, specificity, f= ar.compute_measures(tp, fp, fn, tn)
 
@@ -440,95 +679,123 @@ def get_grouped_rationales_model(annotations, X, train_y, pmids, train_pmids, tr
 
 def get_q_models(annotations, X, pmids, train_pmids, vectorizer, model="ar", use_worker_qualities=True):
     q_models = []
-    ### note that q2 is an integer (population size..)
-    ### so will ignore for now?
-    for question_num in range(1,5):
-        if question_num == 4: # This is Proton beam specific
-            # @TODO something else?
-            pass 
-        else:
-            # get worker quality estimates, which we'll use to 
-            # scale the rationales
-            worker_qualities = estimate_quality_for_q(annotations, question_num, pmids=train_pmids)
+    #pdb.set_trace()
+    # note that we skip the last (4th) question because it
+    # is sample size!
+    for question_num in range(1,4):    
+        # get worker quality estimates, which we'll use to 
+        # scale the rationales
+        worker_qualities = estimate_quality_for_q(annotations, 
+            question_num, pmids=train_pmids)
 
-            # recall that pmids aligns with X. 
-            train_indicators = np.in1d(pmids, train_pmids)
-            X_train = X[train_indicators]
-            X_test = X[np.logical_not(train_indicators)]
+        # recall that pmids aligns with X. 
+        train_indicators = np.in1d(pmids, train_pmids)
+        X_train = X[train_indicators]
+        
 
-            q_lbls = []
-            # build up a labels vector for this question, just using
-            # majority vote.
-            for pmid in train_pmids:
-                q_decisions_for_pmid = \
-                    list(annotations[annotations['documentId'] == pmid]['q%s' % question_num].values)
+        q_lbls, q_X_train, q_X_train_indices = [], [], []
+
+        # build up a labels vector for this question, just using
+        # majority vote.
+        for i, pmid in enumerate(train_pmids):
+            q_decisions_for_pmid = \
+                list(annotations[annotations['documentId'] == pmid]['q%s' % question_num].values)
+            
+            #if question_num > 1:
+            #pdb.set_trace()
+
+            absent_votes = q_decisions_for_pmid.count("\\N") + q_decisions_for_pmid.count("")
+
+            if absent_votes == len(q_decisions_for_pmid):
+                pass 
+            else: 
+                #q_X_train.append(X_train[i])
+                for d in q_decisions_for_pmid:
+                    if d == "\\N":
+                        pass 
+                    else:
+                        q_X_train_indices.append(i)
+                        if d in ("No", "no"):
+                            q_lbls.append(-1)
+                        else:
+                            q_lbls.append(1)
+
+                    #pdb.set_trace()
+
+                '''
+                number_of_labels = float(len(q_decisions_for_pmid) - absent_votes)
                 no_votes = q_decisions_for_pmid.count("No") # all other decisions we take as yes
-                if no_votes > float(len(q_decisions_for_pmid))/2.0:
+                if no_votes == number_of_labels:
+                    #if no_votes > number_of_labels / 2.0:
                     q_lbls.append(-1)
                 else:
                     q_lbls.append(1)
+                '''
+        q_X_train = X_train[q_X_train_indices]
 
-            if model == "ar":
-                # annotator rationale model
-                ##
-                # now load in and encode the rationales
-                #pos_rationales, pos_rationale_worker_ids, \
-                #    neg_rationales, neg_rationale_worker_ids 
+        if model == "ar":
+            # annotator rationale model
+            ##
+            # now load in and encode the rationales
+            #pos_rationales, pos_rationale_worker_ids, \
+            #    neg_rationales, neg_rationale_worker_ids 
 
-                # these are now dictionaries mapping rationales to 
-                # lists of workers that provided them
-                pos_rationales_d, neg_rationales_d = get_q_rationales(annotations, 
-                                                                question_num, pmids=train_pmids)
+            # these are now dictionaries mapping rationales to 
+            # lists of workers that provided them
+            pos_rationales_d, neg_rationales_d = get_q_rationales(annotations, 
+                                                            question_num, pmids=train_pmids)
 
-                # collapse to unique list
-                pos_rationale_worker_ids, unique_pos_rationales = get_unique(pos_rationales_d, worker_qualities)
-                neg_rationale_worker_ids, unique_neg_rationales = get_unique(neg_rationales_d, worker_qualities)
-
-
-
-                # note that this technically gives us tfidf vectors, but we only use 
-                # these to look up non-zero entries anyway (otherwise tf-idf would be a
-                # little weird here)
-                X_pos_rationales = vectorizer.transform(unique_pos_rationales)
-                X_neg_rationales = vectorizer.transform(unique_neg_rationales)
-
-                
-                # ok, build the model already
-                # hyper-params first (for gridsearch)
-                alpha_vals = 10.0**-np.arange(1,7)
-                C_vals = 10.0**-np.arange(0,4)
-                C_contrast_vals = 10.0**-np.arange(1,4)
-                mu_vals = 10.0**np.arange(1,4)
-
-                params_d = {"alpha": alpha_vals, 
-                            "C":C_vals, 
-                            "C_contrast_scalar":C_contrast_vals,
-                            "mu":mu_vals}        
+            # collapse to unique list
+            pos_rationale_worker_ids, unique_pos_rationales = get_unique(pos_rationales_d, worker_qualities)
+            neg_rationale_worker_ids, unique_neg_rationales = get_unique(neg_rationales_d, worker_qualities)
 
 
-                # note that you pass in the training data here, which is a little
-                # weird and deviates from the usual sklearn way of doing things,
-                # because this makes generating and keeping the rationales around
-                # much more efficient
-                if not use_worker_qualities:
-                    worker_qualities = None
 
-                q_model = ar.ARModel(X_pos_rationales, X_neg_rationales,
-                                     pos_rationale_worker_ids, neg_rationale_worker_ids,
-                                     worker_qualities,
-                                     loss="log")
-                print "cv fitting!!"
-                q_model.cv_fit(X_train, q_lbls, alpha_vals, C_vals, C_contrast_vals, mu_vals)
-                q_models.append(q_model)
-                #q_model = ar.ARModel(X_pos_rationales, X_neg_rationales, loss="log")
-            else:
-                # baseline 
-                params_d = {"alpha": 10.0**-np.arange(1,7)}
-                q_model = SGDClassifier(class_weight="auto", loss="log")
+            # note that this technically gives us tfidf vectors, but we only use 
+            # these to look up non-zero entries anyway (otherwise tf-idf would be a
+            # little weird here)
+            X_pos_rationales = vectorizer.transform(unique_pos_rationales)
+            X_neg_rationales = vectorizer.transform(unique_neg_rationales)
 
-                clf = GridSearchCV(q_model, params_d, scoring='f1')
-                clf.fit(X_train, q_lbls)
-                q_models.append(clf)
+            
+            # ok, build the model already
+            # hyper-params first (for gridsearch)
+            alpha_vals = 10.0**-np.arange(1,7)
+            C_vals = 10.0**-np.arange(0,4)
+            C_contrast_vals = 10.0**-np.arange(1,4)
+            mu_vals = 10.0**np.arange(1,4)
+
+            params_d = {"alpha": alpha_vals, 
+                        "C":C_vals, 
+                        "C_contrast_scalar":C_contrast_vals,
+                        "mu":mu_vals}        
+
+
+            # note that you pass in the training data here, which is a little
+            # weird and deviates from the usual sklearn way of doing things,
+            # because this makes generating and keeping the rationales around
+            # much more efficient
+            if not use_worker_qualities:
+                worker_qualities = None
+
+            q_model = ar.ARModel(X_pos_rationales, X_neg_rationales,
+                                 pos_rationale_worker_ids, neg_rationale_worker_ids,
+                                 worker_qualities,
+                                 loss="log")
+            print "cv fitting!!"
+            q_model.cv_fit(q_X_train, q_lbls, alpha_vals, C_vals, C_contrast_vals, mu_vals)
+            q_models.append(q_model)
+            #q_model = ar.ARModel(X_pos_rationales, X_neg_rationales, loss="log")
+        else:
+            # baseline 
+            params_d = {"alpha": 10.0**-np.arange(1,7)}
+            q_model = SGDClassifier(class_weight="auto", loss="log")
+
+            clf = GridSearchCV(q_model, params_d, scoring='f1')
+            
+            clf.fit(q_X_train, q_lbls)
+            #pdb.set_trace()
+            q_models.append(clf)
 
     return q_models
 

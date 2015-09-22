@@ -568,7 +568,7 @@ def rationales_exp(model="ar", n_folds=5, use_worker_qualities=False):
 
     #pdb.set_trace()
     tn, fp, fn, tp = cm #/ float(n_folds)
-    pdb.set_trace()
+    #pdb.set_trace()
     # tp, fp, fn, tn
     #sensitivity, specificity, f = ar.compute_measures(*cm / float(n_folds))
     sensitivity, specificity, f= ar.compute_measures(tp, fp, fn, tn)

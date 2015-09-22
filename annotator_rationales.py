@@ -427,12 +427,17 @@ def proton_beam_example(model="rationales",
     print "----"
 
 def compute_measures(tp, fp, fn, tn):
-     sensitivity = tp / (tp + fn)
-     specificity = tn / (tn + fp)
-     precision   = tp / (tp + fp)
-     #fmeasure = 2 * (specificity * sensitivity) / (specificity + sensitivity)
-     fmeasure = 2 * (precision * sensitivity) / (precision + sensitivity)
-     return sensitivity, specificity, fmeasure
+    tp = float(tp)
+    fp = float(fp)
+    fn = float(fn)
+    tn = float(tn)
+    sensitivity = tp / (tp + fn)
+    specificity = tn / (tn + fp)
+    precision   = tp / (tp + fp)
+    #pdb.set_trace()
+    #fmeasure = 2 * (specificity * sensitivity) / (specificity + sensitivity)
+    fmeasure = 2 * (precision * sensitivity) / (precision + sensitivity)
+    return sensitivity, specificity, fmeasure
 
 
 if  __name__ =='__main__':

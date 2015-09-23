@@ -1,5 +1,6 @@
 import StringIO
 import csv
+import sys
 import pdb 
 import string 
 import math 
@@ -297,7 +298,7 @@ def cartesian(arrays, out=None):
 
 
 
-def rationales_exp_all_train(model="ar", use_worker_qualities=False):
+def rationales_exp_all_train(model="cf_rationales", use_worker_qualities=False):
     ##
     # basics: just load in the data + labels, vectorize
     annotations = load_protonbeam_annotations()
@@ -330,8 +331,9 @@ def rationales_exp_all_train(model="ar", use_worker_qualities=False):
                 # calculate the 'effective' label given by this worker,
                 # as a function of their question decisions
                 
-                question_answers = question_answers[['q1', 'q2', 'q3']].values[0]
-                final_answer = -1 if "No" in question_answers else 1 
+                question_answers_txt = question_answers[['q1', 'q2', 'q3']].values[0]
+                question_answer_num = question_answers[['q4']].values[0][0]
+                final_answer = -1 if ("No" in question_answers_txt or (question_answer_num == '\\N' or (question_answer_num != 'NoInfo' and question_answer_num < 10))) else 1
 
                 train_y.append(final_answer)
                 train_indices.append(i) # repeat the instance
@@ -379,102 +381,123 @@ def rationales_exp_all_train(model="ar", use_worker_qualities=False):
     test_y = np.array(test_y)
     train_y = np.array(train_y)
     
-    if not "grouped" in model: 
-        q_models = get_q_models(annotations, X_all, pmids, train_pmids, 
-                                vectorizer, model=model, 
-                                use_worker_qualities=use_worker_qualities)        
-        
-        q_train = np.matrix([np.array(q_m.predict_proba(X_train))[:,1] for q_m in q_models]).T
+    if "cf" in model:
+        if model == "cf-stacked":
+            q_models = get_q_models(annotations, X_all, pmids, train_pmids,
+                                    vectorizer, model=model,
+                                    use_worker_qualities=use_worker_qualities)
+            q_train = np.matrix([np.array(q_m.predict_proba(X_all[train_indices]))[:,1] for q_m in q_models]).T
+            #q_train = np.matrix([np.array(q_m.decision_function(X[train_indices])) for q_m in q_models]).T
+            #m = get_svm(train_y)
+            m = get_SGD()
 
-        #q1_preds =  q_models[0].predict(X_test) #np.matrix([q_m.predict(X_train) for q_m in q_models]).T
-        #aggregate_predictions = q1_preds
-      
-       
-        params_d = {"alpha": 10.0**-np.arange(0,7)}
-        #class_weight="auto",  further boosts sensitivity...
-        q_model = SGDClassifier(class_weight="auto", loss="hinge")
-        m = GridSearchCV(q_model, params_d, scoring='f1')
+            print "fittting stacked model... "
+            m.fit(q_train, train_y)
 
-        #m = get_SGD()
-        print "fittting stacked model... "
-    
-        
-        #pdb.set_trace()
+            # so this is a matrix 3 columns of predictions; one per question
+            # #of rows = # of test citations
 
-        # so this is a matrix 3 columns of predictions; one per question
-        # #of rows = # of test citations
-        q_predictions = np.matrix([np.array(q_m.predict_proba(X_test)[:,1]) for q_m in q_models]).T
-        #pdb.set_trace()
-        #q_predictions = np.matrix([np.array(q_m.predict_proba(X_test)) for q_m in q_models]).T
+            q_predictions = np.matrix([np.array(q_m.predict_proba(X_all[test_indices])[:,1]) for q_m in q_models]).T
+            #q_predictions = np.matrix([np.array(q_m.decision_function(X[test_indices])) for q_m in q_models]).T
+            aggregate_predictions = m.predict(q_predictions)
+        elif model == "cf-responses-as-features":
+            q_models = get_q_models(annotations, X_all, pmids, train_pmids,
+                                    vectorizer, model=model,
+                                    use_worker_qualities=use_worker_qualities)
 
-        # stacking aggregation
-        #m.fit(q_train, train_y)
-        #aggregate_predictions = m.predict(q_predictions)
+            q_train = np.matrix([np.array(q_m.predict_proba(X_train))[:,1] for q_m in q_models]).T
 
-        #q_predictions = np.matrix([np.array(q_m.decision_function(X[test_indices])) for q_m in q_models]).T
-        
-        # this is the OR approach for q's 2&3
-        #aggregate_predictions = ((q_predictions[:,0] > a_star) & ((q_predictions[:,1] > b_star) | (q_predictions[:,2] > g_star)))
-        
-        # standard AND aggregation
-        #aggregate_predictions = ((q_predictions[:,0] > a_star) & (q_predictions[:,1] > b_star) & (q_predictions[:,2] > g_star))
-        #aggregate_predictions = np.array(map(lambda x: 1 if x else -1, aggregate_predictions ))
-        #aggregate_predictions = ((q_predictions[:,0] >= .5) & (
-        #                            q_predictions[:,1] >= .5) & (q_predictions[:,2] >= .5))
-        #aggregate_predictions = ((q_predictions[:,0] > 0) & 
-        #                           (q_predictions[:,1] > 0) & (q_predictions[:,2] >= 0))
-        
-        #aggregate_predictions = (q_predictions[:,0] + q_predictions[:,1] + q_predictions[:,2]) >= 3
-        #aggregate_predictions = np.array(map(lambda x: 1 if x else -1, aggregate_predictions ))
-        
-        test_q_fvs = np.zeros((X_test.shape[0], 3))
-        #pdb.set_trace()
-        test_q_fvs[:,0] = q_predictions[:,0].T
-        test_q_fvs[:,1] = q_predictions[:,1].T
-        #test_q_fvs[:,3] = 1-q_predictions[:,1].T
-        test_q_fvs[:,2] = q_predictions[:,2].T
-        #test_q_fvs[:,6] = 1-q_predictions[:,2].T
-        #test_q_fvs[:,7] = q_predictions[:,2].T
+            #q1_preds =  q_models[0].predict(X_test) #np.matrix([q_m.predict(X_train) for q_m in q_models]).T
+            #aggregate_predictions = q1_preds
 
-        # populate test
-        
-        '''
-        for q_index, qa in enumerate(question_answers):
-            # so would expect both to be negative
-            # weights; errr possibly the missing
-            # indicator could be slightly positive
-            # as slight correction
-            if qa == "\\N":
-                fv[q_index*3+2] = 1.0 # missing indicator 
-            elif qa in ("No", "no"):
-                fv[q_index*3] = 1.0
-            else:
-                fv[q_index*3+1] = 1.0
-        '''
 
-        m = get_SGD(loss="hinge")
+            params_d = {"alpha": 10.0**-np.arange(0,7)}
+            #class_weight="auto",  further boosts sensitivity...
+            q_model = SGDClassifier(class_weight="auto", loss="hinge")
+            m = GridSearchCV(q_model, params_d, scoring='f1')
 
-        qa_matrix = np.matrix(answers_for_train_pmids)
-        # augment X_train with question features?
-        # this is really inefficient!
+            #m = get_SGD()
+            print "fittting stacked model... "
 
-        X_train_new = np.concatenate((X_train.todense(), qa_matrix), axis=1)
-        #m.fit(X_train_new, train_y)
-        m.fit(X_train_new, train_y)
-        #m.fit(X[train_indices], train_y)
-        #pdb.set_trace()
-        
-        X_test_new = np.concatenate((X_test.todense(), test_q_fvs), axis=1)
-        aggregate_predictions = m.predict(X_test_new)
-        #aggregate_predictions = m.predict(X_test)
-    else:
+
+            #pdb.set_trace()
+
+            # so this is a matrix 3 columns of predictions; one per question
+            # #of rows = # of test citations
+            q_predictions = np.matrix([np.array(q_m.predict_proba(X_test)[:,1]) for q_m in q_models]).T
+            #pdb.set_trace()
+            #q_predictions = np.matrix([np.array(q_m.predict_proba(X_test)) for q_m in q_models]).T
+
+            # stacking aggregation
+            #m.fit(q_train, train_y)
+            #aggregate_predictions = m.predict(q_predictions)
+
+            #q_predictions = np.matrix([np.array(q_m.decision_function(X[test_indices])) for q_m in q_models]).T
+
+            # this is the OR approach for q's 2&3
+            #aggregate_predictions = ((q_predictions[:,0] > a_star) & ((q_predictions[:,1] > b_star) | (q_predictions[:,2] > g_star)))
+
+            # standard AND aggregation
+            #aggregate_predictions = ((q_predictions[:,0] > a_star) & (q_predictions[:,1] > b_star) & (q_predictions[:,2] > g_star))
+            #aggregate_predictions = np.array(map(lambda x: 1 if x else -1, aggregate_predictions ))
+            #aggregate_predictions = ((q_predictions[:,0] >= .5) & (
+            #                            q_predictions[:,1] >= .5) & (q_predictions[:,2] >= .5))
+            #aggregate_predictions = ((q_predictions[:,0] > 0) &
+            #                           (q_predictions[:,1] > 0) & (q_predictions[:,2] >= 0))
+
+            #aggregate_predictions = (q_predictions[:,0] + q_predictions[:,1] + q_predictions[:,2]) >= 3
+            #aggregate_predictions = np.array(map(lambda x: 1 if x else -1, aggregate_predictions ))
+
+            test_q_fvs = np.zeros((X_test.shape[0], 3))
+            #pdb.set_trace()
+            test_q_fvs[:,0] = q_predictions[:,0].T
+            test_q_fvs[:,1] = q_predictions[:,1].T
+            #test_q_fvs[:,3] = 1-q_predictions[:,1].T
+            test_q_fvs[:,2] = q_predictions[:,2].T
+            #test_q_fvs[:,6] = 1-q_predictions[:,2].T
+            #test_q_fvs[:,7] = q_predictions[:,2].T
+
+            # populate test
+
+            '''
+            for q_index, qa in enumerate(question_answers):
+                # so would expect both to be negative
+                # weights; errr possibly the missing
+                # indicator could be slightly positive
+                # as slight correction
+                if qa == "\\N":
+                    fv[q_index*3+2] = 1.0 # missing indicator
+                elif qa in ("No", "no"):
+                    fv[q_index*3] = 1.0
+                else:
+                    fv[q_index*3+1] = 1.0
+            '''
+
+            m = get_SGD(loss="hinge")
+
+            qa_matrix = np.matrix(answers_for_train_pmids)
+            # augment X_train with question features?
+            # this is really inefficient!
+
+            X_train_new = np.concatenate((X_train.todense(), qa_matrix), axis=1)
+            #m.fit(X_train_new, train_y)
+            m.fit(X_train_new, train_y)
+            #m.fit(X[train_indices], train_y)
+            #pdb.set_trace()
+
+            X_test_new = np.concatenate((X_test.todense(), test_q_fvs), axis=1)
+            aggregate_predictions = m.predict(X_test_new)
+            #aggregate_predictions = m.predict(X_test)
+        else:
+            sys.exit('')
+    elif "grouped" in model:
         if model == "grouped":
             # grouped model; simpler case
             m = get_SGD(loss="hinge")
             m.fit(X_train, train_y)
             #m.fit(X[train_indices], train_y)
             aggregate_predictions = m.predict(X_test)
-        else: 
+        elif model == "grouped-rationales":
             # grouped *with rationales* 
             m = get_grouped_rationales_model(
                 annotations, X_all, train_y, pmids, 

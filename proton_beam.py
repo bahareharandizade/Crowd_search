@@ -401,6 +401,7 @@ def rationales_exp_all_train(model="cf_rationales", use_worker_qualities=False):
             #q_predictions = np.matrix([np.array(q_m.decision_function(X[test_indices])) for q_m in q_models]).T
             aggregate_predictions = m.predict(q_predictions)
         elif model == "cf-responses-as-features":
+            # TODO(byron.wallace@utexas.edu): If to be kept as a method, we should fix the erratic behaviour.
             q_models = get_q_models(annotations, X_all, pmids, train_pmids,
                                     vectorizer, model=model,
                                     use_worker_qualities=use_worker_qualities)
@@ -417,7 +418,7 @@ def rationales_exp_all_train(model="cf_rationales", use_worker_qualities=False):
             m = GridSearchCV(q_model, params_d, scoring='f1')
 
             #m = get_SGD()
-            print "fittting stacked model... "
+            print "fittting responses-as-features model... "
 
 
             #pdb.set_trace()
@@ -489,7 +490,7 @@ def rationales_exp_all_train(model="cf_rationales", use_worker_qualities=False):
             aggregate_predictions = m.predict(X_test_new)
             #aggregate_predictions = m.predict(X_test)
         else:
-            sys.exit('')
+            sys.exit('No such method exists.')
     elif "grouped" in model:
         if model == "grouped":
             # grouped model; simpler case
@@ -505,7 +506,8 @@ def rationales_exp_all_train(model="cf_rationales", use_worker_qualities=False):
                 use_worker_qualities=use_worker_qualities) 
             
             aggregate_predictions = m.predict(X_test)
-    
+        else:
+            sys.exit('No such method exists.')
     
     cm = sklearn.metrics.confusion_matrix(test_y, aggregate_predictions).flatten()
     #pdb.set_trace()

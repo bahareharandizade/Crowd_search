@@ -385,7 +385,8 @@ def rationales_exp_all_train(model="cf_rationales", use_worker_qualities=False):
         if model == "cf-stacked":
             q_models = get_q_models(annotations, X_all, pmids, train_pmids,
                                     vectorizer, model=model,
-                                    use_worker_qualities=use_worker_qualities)
+                                    use_worker_qualities=use_worker_qualities,
+                                    use_rationales=False)
             q_train = np.matrix([np.array(q_m.predict_proba(X_all[train_indices]))[:,1] for q_m in q_models]).T
             #q_train = np.matrix([np.array(q_m.decision_function(X[train_indices])) for q_m in q_models]).T
             #m = get_svm(train_y)
@@ -404,7 +405,8 @@ def rationales_exp_all_train(model="cf_rationales", use_worker_qualities=False):
             # TODO(byron.wallace@utexas.edu): If to be kept as a method, we should fix the erratic behaviour.
             q_models = get_q_models(annotations, X_all, pmids, train_pmids,
                                     vectorizer, model=model,
-                                    use_worker_qualities=use_worker_qualities)
+                                    use_worker_qualities=use_worker_qualities,
+                                    use_rationales=False)
 
             q_train = np.matrix([np.array(q_m.predict_proba(X_train))[:,1] for q_m in q_models]).T
 
@@ -530,116 +532,119 @@ def rationales_exp_all_train(model="cf_rationales", use_worker_qualities=False):
     print "F: %s" % f  
     print "----"
 
-def rationales_exp(model="ar", n_folds=5, use_worker_qualities=False):
-    '''
-    model options: 
-        "ar"         -- annotators rationales model
-        "baseline"   -- baseline model, builds separate classifiers   
-                        for each question 
-        "grouped"    -- builds a single model, ignores questions 
-        "grouped-ar" -- builds a single model *and* uses rationales, but 
-                            groups them together.
-
-    '''
-    assert model in ("ar", "baseline", "grouped", "grouped-ar")
-
-    ##
-    # basics: just load in the data + labels, vectorize
-    annotations = load_protonbeam_annotations()
-    texts, pmids = load_texts_and_pmids()
-    vectorizer = TfidfVectorizer(stop_words="english", ngram_range=(1,2), min_df=3, max_features=50000)
-    # note that X and pmids will be aligned.
-    X = vectorizer.fit_transform(texts)
-
-
-    # these are sets of pmids that indicate positive instances;
-    # all other instances are negative. these are final, abstract
-    # level decisions (i.e., aggregate over the sub-questions)
-    lvl1_pmids, lvl2_pmids = read_lbls()
-
-    ### 
-    # now generate folds
-    unique_labeled_pmids = list(set(annotations['documentId']))
-    folds = KFold(len(unique_labeled_pmids), n_folds=n_folds, random_state=10)
-
-    cm = np.zeros(4)
-    for train_indices, test_indices in folds: 
-        train_pmids = np.array(unique_labeled_pmids)[train_indices].tolist()
-        test_pmids  = np.array(unique_labeled_pmids)[test_indices].tolist()
-        train_y, test_y = [], []
-        for pmid in test_pmids:
-            lbl = 1 if pmid in lvl1_pmids else -1
-            test_y.append(lbl)
-        test_y = np.array(test_y)
-
-        for pmid in train_pmids:
-            lbl = 1 if pmid in lvl1_pmids else -1 
-            train_y.append(lbl)
-        train_y = np.array(train_y)
-
-        if not "grouped" in model: 
-            q_models = get_q_models(annotations, X, pmids, train_pmids, vectorizer, model=model, use_worker_qualities=use_worker_qualities)        
-            q_train = np.matrix([np.array(q_m.predict_proba(X[train_indices]))[:,1] for q_m in q_models]).T
-            #q_train = np.matrix([np.array(q_m.decision_function(X[train_indices])) for q_m in q_models]).T
-            #m = get_svm(train_y)
-            m = get_SGD()
-
-            print "fittting stacked model... "
-            m.fit(q_train, train_y)
-
-            # so this is a matrix 3 columns of predictions; one per question
-            # #of rows = # of test citations
-            
-            q_predictions = np.matrix([np.array(q_m.predict_proba(X[test_indices])[:,1]) for q_m in q_models]).T
-            #q_predictions = np.matrix([np.array(q_m.decision_function(X[test_indices])) for q_m in q_models]).T
-            aggregate_predictions = m.predict(q_predictions)
-
-        else:
-            if model == "grouped":
-                # grouped model; simpler case
-                m = get_SGD()
-                m.fit(X[train_indices], train_y)
-
-                aggregate_predictions = m.predict(X[test_indices])
-            else: 
-                # grouped *with rationales* 
-                m = get_grouped_rationales_model(
-                    annotations, X, train_y, pmids, train_pmids, train_indices, vectorizer, use_worker_qualities=use_worker_qualities) 
-                
-                aggregate_predictions = m.predict(X[test_indices])
-
-        # stack these in a simple logistic
-
-        #col_aggregates = np.array(np.sum(q_predictions, axis=1)>0).astype(np.integer) 
-        #col_aggregates[col_aggregates<1]=-1
-        #col_aggregates = col_aggregates[:,0]
-
-        cm += sklearn.metrics.confusion_matrix(test_y, aggregate_predictions).flatten()
-        
-
-
-    tn, fp, fn, tp = cm #/ float(n_folds)
-    #pdb.set_trace()
-    # tp, fp, fn, tn
-    #sensitivity, specificity, f = ar.compute_measures(*cm / float(n_folds))
-    sensitivity, specificity, f= ar.compute_measures(tp, fp, fn, tn)
-
-
-    print "average results for model: %s." % model 
-    print "using worker quality estimates? %s" % use_worker_qualities
-    print "\n----" 
-    print "raw cm %s" % cm
-    print "average cm: \n"
-
-    #print "tp, fp, fn, tn"
-    print "tn, fp, fn, tp"
-    print cm/float(n_folds)
-    print "sensitivity: %s" % sensitivity
-    print "specificity: %s" % specificity
-    # not the traditional F; we use spec instead 
-    # of precision!
-    print "F: %s" % f  
-    print "----"
+# def rationales_exp(model="ar", n_folds=5, use_worker_qualities=False):
+#     '''
+#     model options:
+#         "ar"         -- annotators rationales model
+#         "baseline"   -- baseline model, builds separate classifiers
+#                         for each question
+#         "grouped"    -- builds a single model, ignores questions
+#         "grouped-ar" -- builds a single model *and* uses rationales, but
+#                             groups them together.
+#
+#     '''
+#     assert model in ("ar", "baseline", "grouped", "grouped-ar")
+#
+#     ##
+#     # basics: just load in the data + labels, vectorize
+#     annotations = load_protonbeam_annotations()
+#     texts, pmids = load_texts_and_pmids()
+#     vectorizer = TfidfVectorizer(stop_words="english", ngram_range=(1,2), min_df=3, max_features=50000)
+#     # note that X and pmids will be aligned.
+#     X = vectorizer.fit_transform(texts)
+#
+#
+#     # these are sets of pmids that indicate positive instances;
+#     # all other instances are negative. these are final, abstract
+#     # level decisions (i.e., aggregate over the sub-questions)
+#     lvl1_pmids, lvl2_pmids = read_lbls()
+#
+#     ###
+#     # now generate folds
+#     unique_labeled_pmids = list(set(annotations['documentId']))
+#     folds = KFold(len(unique_labeled_pmids), n_folds=n_folds, random_state=10)
+#
+#     cm = np.zeros(4)
+#     for train_indices, test_indices in folds:
+#         train_pmids = np.array(unique_labeled_pmids)[train_indices].tolist()
+#         test_pmids  = np.array(unique_labeled_pmids)[test_indices].tolist()
+#         train_y, test_y = [], []
+#         for pmid in test_pmids:
+#             lbl = 1 if pmid in lvl1_pmids else -1
+#             test_y.append(lbl)
+#         test_y = np.array(test_y)
+#
+#         for pmid in train_pmids:
+#             lbl = 1 if pmid in lvl1_pmids else -1
+#             train_y.append(lbl)
+#         train_y = np.array(train_y)
+#
+#         if not "grouped" in model:
+#             q_models = get_q_models(annotations, X, pmids, train_pmids,
+#                                     vectorizer, model=model,
+#                                     use_worker_qualities=use_worker_qualities,
+#                                     use_rationales=False)
+#             q_train = np.matrix([np.array(q_m.predict_proba(X[train_indices]))[:,1] for q_m in q_models]).T
+#             #q_train = np.matrix([np.array(q_m.decision_function(X[train_indices])) for q_m in q_models]).T
+#             #m = get_svm(train_y)
+#             m = get_SGD()
+#
+#             print "fittting stacked model... "
+#             m.fit(q_train, train_y)
+#
+#             # so this is a matrix 3 columns of predictions; one per question
+#             # #of rows = # of test citations
+#
+#             q_predictions = np.matrix([np.array(q_m.predict_proba(X[test_indices])[:,1]) for q_m in q_models]).T
+#             #q_predictions = np.matrix([np.array(q_m.decision_function(X[test_indices])) for q_m in q_models]).T
+#             aggregate_predictions = m.predict(q_predictions)
+#
+#         else:
+#             if model == "grouped":
+#                 # grouped model; simpler case
+#                 m = get_SGD()
+#                 m.fit(X[train_indices], train_y)
+#
+#                 aggregate_predictions = m.predict(X[test_indices])
+#             else:
+#                 # grouped *with rationales*
+#                 m = get_grouped_rationales_model(
+#                     annotations, X, train_y, pmids, train_pmids, train_indices, vectorizer, use_worker_qualities=use_worker_qualities)
+#
+#                 aggregate_predictions = m.predict(X[test_indices])
+#
+#         # stack these in a simple logistic
+#
+#         #col_aggregates = np.array(np.sum(q_predictions, axis=1)>0).astype(np.integer)
+#         #col_aggregates[col_aggregates<1]=-1
+#         #col_aggregates = col_aggregates[:,0]
+#
+#         cm += sklearn.metrics.confusion_matrix(test_y, aggregate_predictions).flatten()
+#
+#
+#
+#     tn, fp, fn, tp = cm #/ float(n_folds)
+#     #pdb.set_trace()
+#     # tp, fp, fn, tn
+#     #sensitivity, specificity, f = ar.compute_measures(*cm / float(n_folds))
+#     sensitivity, specificity, f= ar.compute_measures(tp, fp, fn, tn)
+#
+#
+#     print "average results for model: %s." % model
+#     print "using worker quality estimates? %s" % use_worker_qualities
+#     print "\n----"
+#     print "raw cm %s" % cm
+#     print "average cm: \n"
+#
+#     #print "tp, fp, fn, tn"
+#     print "tn, fp, fn, tp"
+#     print cm/float(n_folds)
+#     print "sensitivity: %s" % sensitivity
+#     print "specificity: %s" % specificity
+#     # not the traditional F; we use spec instead
+#     # of precision!
+#     print "F: %s" % f
+#     print "----"
 
 def get_unique(rationales_d, worker_qualities):
     unique_ids, unique_rationales = [], []
@@ -728,7 +733,7 @@ def get_grouped_rationales_model(annotations, X, train_y, pmids, train_pmids, tr
 
 
 
-def get_q_models(annotations, X, pmids, train_pmids, vectorizer, model="ar", use_worker_qualities=True):
+def get_q_models(annotations, X, pmids, train_pmids, vectorizer, model="cf-stacked", use_worker_qualities=True, uae_rationales=False):
     q_models = []
     
     # note that we skip the last (4th) question because it
@@ -781,7 +786,11 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer, model="ar", use
                 '''
         q_X_train = X_train[q_X_train_indices]
 
-        if model == "ar":
+        if(uae_rationales):
+            # TODO(byron.wallace@utexas.edu): Consider moving, or at least extending, this block
+            # Specifically we have several methods which call this method, but they don't necessarily all want the
+            # rationales to be incorporated on a per question basis.
+
             # annotator rationale model
             ##
             # now load in and encode the rationales
@@ -835,7 +844,6 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer, model="ar", use
             q_models.append(q_model)
             #q_model = ar.ARModel(X_pos_rationales, X_neg_rationales, loss="log")
         else:
-            # baseline 
             params_d = {"alpha": 10.0**-np.arange(1,7)}
             q_model = SGDClassifier(class_weight="auto", loss="log")
 

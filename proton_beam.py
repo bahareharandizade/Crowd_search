@@ -510,6 +510,8 @@ def rationales_exp_all_train(model="cf_rationales", use_worker_qualities=False):
             aggregate_predictions = m.predict(X_test)
         else:
             sys.exit('No such method exists.')
+    else:
+        sys.exit('No such method exists.')
     
     cm = sklearn.metrics.confusion_matrix(test_y, aggregate_predictions).flatten()
     #pdb.set_trace()
@@ -733,7 +735,7 @@ def get_grouped_rationales_model(annotations, X, train_y, pmids, train_pmids, tr
 
 
 
-def get_q_models(annotations, X, pmids, train_pmids, vectorizer, model="cf-stacked", use_worker_qualities=True, uae_rationales=False):
+def get_q_models(annotations, X, pmids, train_pmids, vectorizer, model="cf-stacked", use_worker_qualities=True, use_rationales=False):
     q_models = []
     
     # note that we skip the last (4th) question because it
@@ -786,7 +788,7 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer, model="cf-stack
                 '''
         q_X_train = X_train[q_X_train_indices]
 
-        if(uae_rationales):
+        if(use_rationales):
             # TODO(byron.wallace@utexas.edu): Consider moving, or at least extending, this block
             # Specifically we have several methods which call this method, but they don't necessarily all want the
             # rationales to be incorporated on a per question basis.

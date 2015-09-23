@@ -515,7 +515,6 @@ def rationales_exp_all_train(model="cf_rationales", use_worker_qualities=False):
     #sensitivity, specificity, f = ar.compute_measures(*cm / float(n_folds))
     sensitivity, specificity, f= ar.compute_measures(tp, fp, fn, tn)
 
-    print "!!! WARNING YOU ARE USING LEVEL-2 FOR EVALUATION AND LEVEL-1 FOR TRAINING !!!"
     print "results on test set for model: %s." % model 
     print "using worker quality estimates? %s" % use_worker_qualities
     print "\n----" 

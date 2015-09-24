@@ -298,7 +298,7 @@ def cartesian(arrays, out=None):
 
 
 
-def rationales_exp_all_train(model="cf_rationales", use_worker_qualities=False):
+def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
     ##
     # basics: just load in the data + labels, vectorize
     annotations = load_protonbeam_annotations()
@@ -330,17 +330,34 @@ def rationales_exp_all_train(model="cf_rationales", use_worker_qualities=False):
             for worker, question_answers in q_decisions_for_pmid.groupby("workerId"):
                 # calculate the 'effective' label given by this worker,
                 # as a function of their question decisions
-                
-                question_answers_txt = question_answers[['q1', 'q2', 'q3']].values[0]
-                question_answer_num = question_answers[['q4']].values[0][0]
-                final_answer = -1 if ("No" in question_answers_txt or (question_answer_num == '\\N' or (question_answer_num != 'NoInfo' and question_answer_num < 10))) else 1
 
-                train_y.append(final_answer)
-                train_indices.append(i) # repeat the instance
+                if model == "cf-independent-responses":
+                    q1 = question_answers[['q1']].values[0]
+                    q2 = question_answers[['q2']].values[0]
+                    q3 = question_answers[['q3']].values[0]
+                    q4 = question_answers[['q4']].values[0][0]
+                    q1a = -1 if (q1 == "No" or q1 == "\\N") else 1
+                    q2a = -1 if (q2 == "No" or q2 == "\\N") else 1
+                    q3a = -1 if (q3 == "No" or q3 == "\\N") else 1
+                    q4a = -1 if (q4 == '\\N' or (q4 != 'NoInfo' and q4 < 10)) else 1
+                    train_y.append(q1a)
+                    train_indices.append(i) # repeat the instance
+                    train_y.append(q2a)
+                    train_indices.append(i) # repeat the instance
+                    train_y.append(q3a)
+                    train_indices.append(i) # repeat the instance
+                    train_y.append(q4a)
+                    train_indices.append(i) # repeat the instance
+                else:
+                    question_answers_txt = question_answers[['q1', 'q2', 'q3']].values[0]
+                    question_answer_num = question_answers[['q4']].values[0][0]
+                    final_answer = -1 if ("No" in question_answers_txt or "\\N" in question_answers_txt or (question_answer_num == '\\N' or (question_answer_num != 'NoInfo' and question_answer_num < 10))) else 1
+                    train_y.append(final_answer)
+                    train_indices.append(i) # repeat the instance
 
 
                 q_fv = np.zeros(3)#np.zeros(3*3) # unidentifiable if we have an intercept!
-                
+
                 for q_index, qa in enumerate(question_answers):
                     # so would expect both to be negative
                     # weights; errr possibly the missing
@@ -348,13 +365,13 @@ def rationales_exp_all_train(model="cf_rationales", use_worker_qualities=False):
                     # as slight correction
                     if qa == "\\N":
                         pass
-                        # q_fv[3*q_index+2] = 0#1.0 # missing indicator 
+                        # q_fv[3*q_index+2] = 0#1.0 # missing indicator
                     else:
                         #if qa in ("No", "no"):
                         #    q_fv[3*q_index] = 1.0
                         if qa in ("Yes", "yes"):
                             q_fv[q_index] = 1.0
-                    
+
                 answers_for_train_pmids.append(q_fv)
         else:    
             ###
@@ -491,6 +508,11 @@ def rationales_exp_all_train(model="cf_rationales", use_worker_qualities=False):
             X_test_new = np.concatenate((X_test.todense(), test_q_fvs), axis=1)
             aggregate_predictions = m.predict(X_test_new)
             #aggregate_predictions = m.predict(X_test)
+        elif model == "cf-independent-responses":
+            m = get_SGD(loss="hinge")
+            m.fit(X_train, train_y)
+            #m.fit(X[train_indices], train_y)
+            aggregate_predictions = m.predict(X_test)
         else:
             sys.exit('No such method exists.')
     elif "grouped" in model:

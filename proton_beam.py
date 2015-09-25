@@ -227,11 +227,11 @@ def get_q_rationales(data, qnum, pmids=None):
     return list(set(pos_rationales)), list(set(neg_rationales))
 '''
 
-def get_SGD(class_weight="auto", loss="log"):
+def get_SGD(class_weight="auto", loss="log", random_state=None):
     #C_range = np.logspace(-2, 10, 13)
     #return SGDClassifier(penalty=None)#, class_weight="auto")
     params_d = {"alpha": 10.0**-np.arange(0,7)}
-    q_model = SGDClassifier(class_weight=class_weight, loss=loss)
+    q_model = SGDClassifier(class_weight=class_weight, loss=loss, random_state=random_state)
 
     clf = GridSearchCV(q_model, params_d, scoring='f1')
     return clf 
@@ -416,7 +416,7 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
             q_train = np.matrix([np.array(q_m.predict_proba(X_all[train_indices]))[:,1] for q_m in q_models]).T
             #q_train = np.matrix([np.array(q_m.decision_function(X[train_indices])) for q_m in q_models]).T
             #m = get_svm(train_y)
-            m = get_SGD()
+            m = get_SGD(class_weight=None)
 
             print "fittting stacked model... "
             m.fit(q_train, train_y)
@@ -483,9 +483,9 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
 
             # so this is a matrix 3 columns of predictions; one per question
             # #of rows = # of test citations
-            #q_predictions = np.matrix([np.array(q_m.predict_proba(X_test)[:,1]) for q_m in q_models]).T
+            q_predictions = np.matrix([np.array(q_m.predict_proba(X_test)[:,1]) for q_m in q_models]).T
             #pdb.set_trace()
-            q_predictions = np.matrix([np.array(q_m.predict(X_test)) for q_m in q_models]).T
+            #q_predictions = np.matrix([np.array(q_m.predict(X_test)) for q_m in q_models]).T
 
             # stacking aggregation
             #m.fit(q_train, train_y)
@@ -504,7 +504,9 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
             #aggregate_predictions = ((q_predictions[:,0] > 0) &
             #                           (q_predictions[:,1] > 0) & (q_predictions[:,2] >= 0))
 
-            aggregate_predictions = (q_predictions[:,0] + q_predictions[:,1] + q_predictions[:,2]) >= 3
+            #aggregate_predictions = (q_predictions[:,0] + q_predictions[:,1] + q_predictions[:,2]) >= 3
+            #pdb.set_trace()
+            aggregate_predictions = (q_predictions[:,0] >= .1) & ((q_predictions[:,1] >= .5) | (q_predictions[:,2] >= .5))
             aggregate_predictions = np.array(map(lambda x: 1 if x else -1, aggregate_predictions ))
 
             #
@@ -583,7 +585,7 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
                     fv[q_index*3+1] = 1.0
             '''
 
-            m = get_SGD(loss="hinge")
+            m = get_SGD(loss="hinge", random_state=42)
 
             qa_matrix = np.matrix(answers_for_train_pmids)
             # augment X_train with question features?
@@ -608,7 +610,7 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
     elif "grouped" in model:
         if model == "grouped":
             # grouped model; simpler case
-            m = get_SGD(loss="hinge")
+            m = get_SGD(loss="hinge", random_state=42)
             m.fit(X_train, train_y)
             #m.fit(X[train_indices], train_y)
             aggregate_predictions = m.predict(X_test)

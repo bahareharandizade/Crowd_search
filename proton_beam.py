@@ -416,7 +416,7 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
             q_train = np.matrix([np.array(q_m.predict_proba(X_all[train_indices]))[:,1] for q_m in q_models]).T
             #q_train = np.matrix([np.array(q_m.decision_function(X[train_indices])) for q_m in q_models]).T
             #m = get_svm(train_y)
-            m = get_SGD(class_weight=None)
+            m = get_SGD(class_weight=None, random_state=42)
 
             print "fittting stacked model... "
             m.fit(q_train, train_y)
@@ -442,7 +442,7 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
 
             params_d = {"alpha": 10.0**-np.arange(0,7)}
             #class_weight="auto",  further boosts sensitivity...
-            q_model = SGDClassifier(class_weight="auto", loss="hinge")
+            q_model = SGDClassifier(class_weight="auto", loss="hinge", random_state=42)
             m = GridSearchCV(q_model, params_d, scoring='f1')
 
             #m = get_SGD()
@@ -525,7 +525,7 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
 
             params_d = {"alpha": 10.0**-np.arange(0,7)}
             #class_weight="auto",  further boosts sensitivity...
-            q_model = SGDClassifier(class_weight="auto", loss="hinge")
+            q_model = SGDClassifier(class_weight="auto", loss="hinge", random_state=42)
             m = GridSearchCV(q_model, params_d, scoring='f1')
 
             #m = get_SGD()
@@ -601,7 +601,7 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
             aggregate_predictions = m.predict(X_test_new)
             #aggregate_predictions = m.predict(X_test)
         elif model == "cf-independent-responses":
-            m = get_SGD(loss="hinge")
+            m = get_SGD(loss="hinge", random_state=42)
             m.fit(X_train, train_y)
             #m.fit(X[train_indices], train_y)
             aggregate_predictions = m.predict(X_test)
@@ -961,7 +961,7 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer, model="cf-stack
             #q_model = ar.ARModel(X_pos_rationales, X_neg_rationales, loss="log")
         else:
             params_d = {"alpha": 10.0**-np.arange(1,7)}
-            q_model = SGDClassifier(class_weight="auto", loss="log")
+            q_model = SGDClassifier(class_weight="auto", loss="log", random_state=42)
 
             clf = GridSearchCV(q_model, params_d, scoring='f1')
             

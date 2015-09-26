@@ -511,11 +511,17 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
 
             #
             #pdb.set_trace()
-        elif model == "cf-responses-as-features":
-            q_models = get_q_models(annotations, X_all, pmids, train_pmids,
-                                    vectorizer, model=model,
-                                    use_worker_qualities=use_worker_qualities,
-                                    use_rationales=False)
+        elif model == "cf-responses-as-features" or model == "cf-responses-as-features-wr":
+            if "wr" in model:
+                q_models = get_q_models(annotations, X_all, pmids, train_pmids,
+                                        vectorizer, model=model,
+                                        use_worker_qualities=use_worker_qualities,
+                                        use_rationales=True)
+            else:
+                q_models = get_q_models(annotations, X_all, pmids, train_pmids,
+                                        vectorizer, model=model,
+                                        use_worker_qualities=use_worker_qualities,
+                                        use_rationales=False)
 
             q_train = np.matrix([np.array(q_m.predict_proba(X_train))[:,1] for q_m in q_models]).T
 
@@ -614,7 +620,7 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
             m.fit(X_train, train_y)
             #m.fit(X[train_indices], train_y)
             aggregate_predictions = m.predict(X_test)
-        elif model == "grouped-rationales":
+        elif model == "grouped-wr":
             # grouped *with rationales* 
             m = get_grouped_rationales_model(
                 annotations, X_all, train_y, pmids, 

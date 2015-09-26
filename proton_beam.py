@@ -227,11 +227,11 @@ def get_q_rationales(data, qnum, pmids=None):
     return list(set(pos_rationales)), list(set(neg_rationales))
 '''
 
-def get_SGD(class_weight="auto", loss="log"):
+def get_SGD(class_weight="auto", loss="log", random_state=None):
     #C_range = np.logspace(-2, 10, 13)
     #return SGDClassifier(penalty=None)#, class_weight="auto")
     params_d = {"alpha": 10.0**-np.arange(0,7)}
-    q_model = SGDClassifier(class_weight=class_weight, loss=loss)
+    q_model = SGDClassifier(class_weight=class_weight, loss=loss, random_state=random_state)
 
     clf = GridSearchCV(q_model, params_d, scoring='f1')
     return clf 
@@ -400,6 +400,15 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
     
     if "cf" in model:
         if model == "cf-stacked":
+            # TODO: Fix the occasional zero division error (no true or false positives in the results?)
+            # Traceback (most recent call last):
+            # File "<stdin>", line 1, in <module>
+            # File "proton_beam.py", line 544, in rationales_exp_all_train
+            # sensitivity, specificity, f= ar.compute_measures(tp, fp, fn, tn)
+            # File "annotator_rationales.py", line 436, in compute_measures
+            # precision   = tp / (tp + fp)
+            # ZeroDivisionError: float division by zero
+            #
             q_models = get_q_models(annotations, X_all, pmids, train_pmids,
                                     vectorizer, model=model,
                                     use_worker_qualities=use_worker_qualities,
@@ -407,7 +416,7 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
             q_train = np.matrix([np.array(q_m.predict_proba(X_all[train_indices]))[:,1] for q_m in q_models]).T
             #q_train = np.matrix([np.array(q_m.decision_function(X[train_indices])) for q_m in q_models]).T
             #m = get_svm(train_y)
-            m = get_SGD()
+            m = get_SGD(class_weight=None, random_state=42)
 
             print "fittting stacked model... "
             m.fit(q_train, train_y)
@@ -418,12 +427,12 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
             q_predictions = np.matrix([np.array(q_m.predict_proba(X_all[test_indices])[:,1]) for q_m in q_models]).T
             #q_predictions = np.matrix([np.array(q_m.decision_function(X[test_indices])) for q_m in q_models]).T
             aggregate_predictions = m.predict(q_predictions)
-        elif model == "cf-responses-as-features":
-            # TODO(byron.wallace@utexas.edu): If to be kept as a method, we should fix the erratic behaviour.
+        elif model == "cf-predictions":
+            # TODO(byron.wallace@utexas.edu): Please check this code is up to date. It's from an earlier revision.
+            # TODO(byron.wallace@utexas.edu): Also maybe a better name? cf-predictions was.. lazy.. sorry ;-)
             q_models = get_q_models(annotations, X_all, pmids, train_pmids,
-                                    vectorizer, model=model,
-                                    use_worker_qualities=use_worker_qualities,
-                                    use_rationales=False)
+                                vectorizer, model=model,
+                                use_worker_qualities=use_worker_qualities)
 
             q_train = np.matrix([np.array(q_m.predict_proba(X_train))[:,1] for q_m in q_models]).T
 
@@ -433,7 +442,96 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
 
             params_d = {"alpha": 10.0**-np.arange(0,7)}
             #class_weight="auto",  further boosts sensitivity...
-            q_model = SGDClassifier(class_weight="auto", loss="hinge")
+            q_model = SGDClassifier(class_weight="auto", loss="hinge", random_state=42)
+            m = GridSearchCV(q_model, params_d, scoring='f1')
+
+            #m = get_SGD()
+            print "fittting predictions model... "
+            #pdb.set_trace()
+
+            # do not use expert labels in training!!! FOR EITHER
+            # MODEL
+            '''
+            And now for extremely naive/slow model fitting!
+            '''
+            '''
+            lambda_ = 1
+            alpha_vals = np.linspace(.2,.8,25)
+            beta_vals = np.linspace(.2,.8,25)
+            gamma_vals = np.linspace(.1,.8,25)
+            a_star, b_star, g_star = None, None, None
+            best_score, best_sens, best_spec = -np.inf, -np.inf, -np.inf
+            for a, b, g in cartesian([alpha_vals, beta_vals, gamma_vals]):
+                #preds = ((q_train[:,0] > a) & ((q_train[:,1] > b) | (q_train[:,2] > g)))
+                preds = ((q_train[:,0] > a) & (q_train[:,1] > b) & (q_train[:,2] > g))
+                #preds = q_train[:,0] > a
+                preds = np.array(map(lambda x: 1 if x else -1, preds))
+                sens = sklearn.metrics.accuracy_score(train_y[train_y>0], preds[train_y>0])
+                spec = sklearn.metrics.accuracy_score(train_y[train_y<=0], preds[train_y<=0])
+
+                cur_score = lambda_ * sens + spec
+
+                if cur_score > best_score:
+                    a_star, b_star, g_star = a, b, g
+                    best_score = cur_score
+                    best_sens = sens
+                    best_spec = spec
+
+            '''
+
+            #pdb.set_trace()
+
+            # so this is a matrix 3 columns of predictions; one per question
+            # #of rows = # of test citations
+            q_predictions = np.matrix([np.array(q_m.predict_proba(X_test)[:,1]) for q_m in q_models]).T
+            #pdb.set_trace()
+            #q_predictions = np.matrix([np.array(q_m.predict(X_test)) for q_m in q_models]).T
+
+            # stacking aggregation
+            #m.fit(q_train, train_y)
+            #aggregate_predictions = m.predict(q_predictions)
+
+            #q_predictions = np.matrix([np.array(q_m.decision_function(X[test_indices])) for q_m in q_models]).T
+
+            # this is the OR approach for q's 2&3
+            #aggregate_predictions = ((q_predictions[:,0] > a_star) & ((q_predictions[:,1] > b_star) | (q_predictions[:,2] > g_star)))
+
+            # standard AND aggregation
+            #aggregate_predictions = ((q_predictions[:,0] > a_star) & (q_predictions[:,1] > b_star) & (q_predictions[:,2] > g_star))
+            #aggregate_predictions = np.array(map(lambda x: 1 if x else -1, aggregate_predictions ))
+            #aggregate_predictions = ((q_predictions[:,0] >= .5) & (
+            #                            q_predictions[:,1] >= .5) & (q_predictions[:,2] >= .5))
+            #aggregate_predictions = ((q_predictions[:,0] > 0) &
+            #                           (q_predictions[:,1] > 0) & (q_predictions[:,2] >= 0))
+
+            #aggregate_predictions = (q_predictions[:,0] + q_predictions[:,1] + q_predictions[:,2]) >= 3
+            #pdb.set_trace()
+            aggregate_predictions = (q_predictions[:,0] >= .1) & ((q_predictions[:,1] >= .5) | (q_predictions[:,2] >= .5))
+            aggregate_predictions = np.array(map(lambda x: 1 if x else -1, aggregate_predictions ))
+
+            #
+            #pdb.set_trace()
+        elif model == "cf-responses-as-features" or model == "cf-responses-as-features-wr":
+            if "wr" in model:
+                q_models = get_q_models(annotations, X_all, pmids, train_pmids,
+                                        vectorizer, model=model,
+                                        use_worker_qualities=use_worker_qualities,
+                                        use_rationales=True)
+            else:
+                q_models = get_q_models(annotations, X_all, pmids, train_pmids,
+                                        vectorizer, model=model,
+                                        use_worker_qualities=use_worker_qualities,
+                                        use_rationales=False)
+
+            q_train = np.matrix([np.array(q_m.predict_proba(X_train))[:,1] for q_m in q_models]).T
+
+            #q1_preds =  q_models[0].predict(X_test) #np.matrix([q_m.predict(X_train) for q_m in q_models]).T
+            #aggregate_predictions = q1_preds
+
+
+            params_d = {"alpha": 10.0**-np.arange(0,7)}
+            #class_weight="auto",  further boosts sensitivity...
+            q_model = SGDClassifier(class_weight="auto", loss="hinge", random_state=42)
             m = GridSearchCV(q_model, params_d, scoring='f1')
 
             #m = get_SGD()
@@ -493,7 +591,7 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
                     fv[q_index*3+1] = 1.0
             '''
 
-            m = get_SGD(loss="hinge")
+            m = get_SGD(loss="hinge", random_state=42)
 
             qa_matrix = np.matrix(answers_for_train_pmids)
             # augment X_train with question features?
@@ -509,20 +607,20 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
             aggregate_predictions = m.predict(X_test_new)
             #aggregate_predictions = m.predict(X_test)
         elif model == "cf-independent-responses":
-            m = get_SGD(loss="hinge")
+            m = get_SGD(loss="hinge", random_state=42)
             m.fit(X_train, train_y)
             #m.fit(X[train_indices], train_y)
             aggregate_predictions = m.predict(X_test)
         else:
-            sys.exit('No such method exists.')
+            raise NotImplementedError('No such method exists.')
     elif "grouped" in model:
         if model == "grouped":
             # grouped model; simpler case
-            m = get_SGD(loss="hinge")
+            m = get_SGD(loss="hinge", random_state=42)
             m.fit(X_train, train_y)
             #m.fit(X[train_indices], train_y)
             aggregate_predictions = m.predict(X_test)
-        elif model == "grouped-rationales":
+        elif model == "grouped-wr":
             # grouped *with rationales* 
             m = get_grouped_rationales_model(
                 annotations, X_all, train_y, pmids, 
@@ -531,9 +629,9 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
             
             aggregate_predictions = m.predict(X_test)
         else:
-            sys.exit('No such method exists.')
+            raise NotImplementedError('No such method exists.')
     else:
-        sys.exit('No such method exists.')
+        raise NotImplementedError('No such method exists.')
     
     cm = sklearn.metrics.confusion_matrix(test_y, aggregate_predictions).flatten()
     #pdb.set_trace()
@@ -869,7 +967,7 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer, model="cf-stack
             #q_model = ar.ARModel(X_pos_rationales, X_neg_rationales, loss="log")
         else:
             params_d = {"alpha": 10.0**-np.arange(1,7)}
-            q_model = SGDClassifier(class_weight="auto", loss="log")
+            q_model = SGDClassifier(class_weight="auto", loss="log", random_state=42)
 
             clf = GridSearchCV(q_model, params_d, scoring='f1')
             

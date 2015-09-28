@@ -525,7 +525,7 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
 
             params_d = {"alpha": 10.0**-np.arange(0,7)}
             #class_weight="auto",  further boosts sensitivity...
-            q_model = SGDClassifier(class_weight="auto", loss="hinge")
+            q_model = SGDClassifier(class_weight="auto", loss="hinge", random_state=42)
             m = GridSearchCV(q_model, params_d, scoring='f1')
 
             #m = get_SGD()
@@ -849,7 +849,8 @@ def get_grouped_rationales_model(annotations, X, train_y, pmids, train_pmids, tr
 
 
 
-def get_q_models(annotations, X, pmids, train_pmids, vectorizer, model="cf-stacked", use_worker_qualities=True, use_rationales=False):
+def get_q_models(annotations, X, pmids, train_pmids, vectorizer, 
+                    model="cf-stacked", use_worker_qualities=True, use_rationales=False):
     q_models = []
     
     # note that we skip the last (4th) question because it

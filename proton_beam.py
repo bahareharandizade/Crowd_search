@@ -86,6 +86,39 @@ def flatten_rationales(all_rationales, workers):
     return rationales_flat, workers_extended
 
 
+def get_M_overall(annotations, train_pmids):
+    rows_list = []
+
+    for pmid in train_pmids:
+        all_annotations_for_pmid = annotations[annotations['documentId'] == pmid]
+        for worker, question_answers in all_annotations_for_pmid.groupby("workerId"):
+            question_answers_txt = question_answers[['q1', 'q2', 'q3']].values[0]
+            question_answer_num = question_answers[['q4']].values[0][0]
+            final_answer = 3 if (
+                    "No" in question_answers_txt or "\\N" in question_answers_txt or (
+                    question_answer_num == '\\N' or 
+                    (question_answer_num != 'NoInfo' and question_answer_num < 10))) else 4
+            row_d = {"workerId":worker, "label":final_answer, "documentId":pmid}
+            rows_list.append(row_d)
+
+    doc_annos = pd.DataFrame(rows_list)
+    #unique_workers = list(set(doc_annos["workerId"].values))
+    #pdb.set_trace()
+    pivoted = doc_annos.pivot(index="documentId", columns="workerId")
+    pivoted = pivoted.fillna(2)
+    m = pd.DataFrame.as_matrix(pivoted)    
+    workers = list(pivoted['label'].keys())
+    return m, workers 
+    
+
+def estimate_quality_instance_level(annotations, pmids):
+    m, workers = get_M_overall(annotations, pmids)
+    instance_model = ModelB.create_initial_state(2, len(workers))
+    anno = AnnotationsContainer.from_array(m, missing_values=[2])
+    instance_model.map(anno.annotations) 
+    proxy_skill = (instance_model.theta[:,0,0] + instance_model.theta[:,1,1]) / 2.0
+    return dict(zip(workers, proxy_skill))
+
 def get_M_q(data, qnum, pmids=None):
     '''
     returns an |pmids| x |workers| matrix, where 
@@ -105,18 +138,23 @@ def get_M_q(data, qnum, pmids=None):
     #pivoted.replace("CantTell", 4, inplace=True)
     pivoted.replace(["Yes", "yes","CantTell"], 4, inplace=True)
     pivoted.replace(["No", "no"], 3, inplace=True)
+    # we use '2' as our missing value; this is later signaled 
+    # to the AnnotationsContainer
     pivoted.replace(["\\N","NA"], np.nan, inplace=True)
     pivoted = pivoted.fillna(2)
     workers = list(pivoted["q%s"%qnum].keys()) # this preserves order
     # matrix 
     m = pd.DataFrame.as_matrix(pivoted["q%s"%qnum])
+
     return m, workers
 
 def estimate_quality_for_q(annotations, qnum, pmids=None):
     m, workers = get_M_q(annotations, qnum, pmids=pmids)
     q_model = ModelB.create_initial_state(2, len(workers))
     anno = AnnotationsContainer.from_array(m, missing_values=[2])
+    
     q_model.map(anno.annotations)
+    
     '''
     pi[k] is the probability of label k
     theta[j,k,k'] is the probability that 
@@ -227,13 +265,14 @@ def get_q_rationales(data, qnum, pmids=None):
     return list(set(pos_rationales)), list(set(neg_rationales))
 '''
 
-def get_SGD(class_weight="auto", loss="log", random_state=None):
+def get_SGD(class_weight="auto", loss="log", random_state=None, fit_params=None):
     #C_range = np.logspace(-2, 10, 13)
     #return SGDClassifier(penalty=None)#, class_weight="auto")
     params_d = {"alpha": 10.0**-np.arange(0,7)}
+    
     q_model = SGDClassifier(class_weight=class_weight, loss=loss, random_state=random_state)
 
-    clf = GridSearchCV(q_model, params_d, scoring='f1')
+    clf = GridSearchCV(q_model, params_d, scoring='f1', fit_params=fit_params)
     return clf 
 
 def get_svm(y):
@@ -308,7 +347,7 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
     texts, pmids = load_texts_and_pmids()
     train_indices, test_indices = [], []
     train_y, test_y = [], []
-
+    train_worker_ids = [] # for grouped
     answers_for_train_pmids = []
 
     for i, pmid in enumerate(pmids):    
@@ -355,6 +394,7 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
                     train_y.append(final_answer)
                     train_indices.append(i) # repeat the instance
 
+                train_worker_ids.append(worker)
 
                 q_fv = np.zeros(3)#np.zeros(3*3) # unidentifiable if we have an intercept!
 
@@ -534,8 +574,6 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
             train_q_fvs[:,1] = q_train[:,1].T
             train_q_fvs[:,2] = q_train[:,2].T
 
-
-            #m = get_SGD()
             print "fittting responses-as-features model... "
 
 
@@ -607,8 +645,16 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
     elif "grouped" in model:
         if model == "grouped":
             # grouped model; simpler case
-            m = get_SGD(loss="hinge", random_state=42)
-            m.fit(X_train, train_y)
+            
+            if use_worker_qualities:
+                instance_quality_d = estimate_quality_instance_level(annotations, train_pmids)#get_M_overall(annotations, train_pmids)
+                worker_weights = [instance_quality_d[w] for w in train_worker_ids]
+                m = get_SGD(loss="hinge", random_state=42, fit_params={"sample_weight":worker_weights})
+                #pdb.set_trace()
+                m.fit(X_train, train_y)
+            else:
+                m = get_SGD(loss="hinge", random_state=42)
+                m.fit(X_train, train_y)
             #m.fit(X[train_indices], train_y)
             aggregate_predictions = m.predict(X_test)
         elif model == "grouped-wr":

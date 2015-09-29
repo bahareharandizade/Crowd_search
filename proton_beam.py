@@ -571,7 +571,7 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
             q_train = np.matrix([np.array(q_m.predict_proba(X_train))[:,1] for q_m in q_models]).T
 
             # bcw: introducing interaction features, too (9/29)
-            train_q_fvs = np.zeros((X_train.shape[0], 6))
+            train_q_fvs = np.zeros((X_train.shape[0], 5))
 
             train_q_fvs[:,0] = q_train[:,0].T
             train_q_fvs[:,1] = q_train[:,1].T

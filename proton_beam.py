@@ -566,13 +566,22 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
                                         use_worker_qualities=use_worker_qualities,
                                         use_rationales=False)
 
+            # we train on the predicted probabilities, rather than the observed labels, 
+            # to sort of calibrate. 
             q_train = np.matrix([np.array(q_m.predict_proba(X_train))[:,1] for q_m in q_models]).T
 
-            train_q_fvs = np.zeros((X_train.shape[0], 3))
+            # bcw: introducing interaction features, too (9/29)
+            train_q_fvs = np.zeros((X_train.shape[0], 6))
 
             train_q_fvs[:,0] = q_train[:,0].T
             train_q_fvs[:,1] = q_train[:,1].T
             train_q_fvs[:,2] = q_train[:,2].T
+
+            ### 9/28
+            train_q_fvs[:,3] = np.multiply(q_train[:,0], q_train[:,1]).T
+            train_q_fvs[:,4] = np.multiply(q_train[:,0], q_train[:,2]).T
+
+            # also introduce
 
             print "fittting responses-as-features model... "
 
@@ -592,7 +601,7 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
 
 
 
-            test_q_fvs = np.zeros((X_test.shape[0], 3))
+            test_q_fvs = np.zeros((X_test.shape[0], 5)) # was 3.
             #pdb.set_trace()
             test_q_fvs[:,0] = q_predictions[:,0].T
             test_q_fvs[:,1] = q_predictions[:,1].T
@@ -600,6 +609,10 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
             test_q_fvs[:,2] = q_predictions[:,2].T
             #test_q_fvs[:,6] = 1-q_predictions[:,2].T
             #test_q_fvs[:,7] = q_predictions[:,2].T
+
+            # bcw: interaction features (9/28)
+            test_q_fvs[:,3] = np.multiply(q_predictions[:,0], q_predictions[:,1]).T
+            test_q_fvs[:,4] = np.multiply(q_predictions[:,0], q_predictions[:,2]).T
 
             # populate test
 
@@ -676,7 +689,7 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
 
     # tp, fp, fn, tn
     #sensitivity, specificity, f = ar.compute_measures(*cm / float(n_folds))
-    sensitivity, specificity, f= ar.compute_measures(tp, fp, fn, tn)
+    sensitivity, specificity, precision, f2measure = ar.compute_measures(tp, fp, fn, tn)
 
     print "results on test set for model: %s." % model 
     print "using worker quality estimates? %s" % use_worker_qualities
@@ -686,9 +699,10 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
     print cm
     print "sensitivity: %s" % sensitivity
     print "specificity: %s" % specificity
+    print "precision: %s" % precision
     # not the traditional F; we use spec instead 
     # of precision!
-    print "F: %s" % f  
+    print "F2: %s" % f2measure 
     print "----"
 
 # def rationales_exp(model="ar", n_folds=5, use_worker_qualities=False):

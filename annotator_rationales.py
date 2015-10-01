@@ -86,7 +86,7 @@ class ARModel():
 
         for cur_alpha, cur_C, cur_C_contrast_scalar, cur_mu in product(alpha_vals, 
                                                         C_vals, C_contrast_vals, mu_vals):
-            kf = KFold(X.shape[0], n_folds=5)
+            kf = KFold(X.shape[0], n_folds=5, random_state=10)
             scores_for_params = []
             for nested_train, nested_test in kf:
                 
@@ -436,8 +436,9 @@ def compute_measures(tp, fp, fn, tn):
     precision   = tp / (tp + fp)
     #pdb.set_trace()
     #fmeasure = 2 * (specificity * sensitivity) / (specificity + sensitivity)
-    fmeasure = 2 * (precision * sensitivity) / (precision + sensitivity)
-    return sensitivity, specificity, fmeasure
+    #fmeasure = 2 * (precision * sensitivity) / (precision + sensitivity)
+    f2measure = (1+2**2) * (precision * sensitivity) / ((2**2 * precision) + sensitivity)
+    return sensitivity, specificity, precision, f2measure
 
 
 if  __name__ =='__main__':

@@ -86,7 +86,7 @@ class ARModel():
 
         for cur_alpha, cur_C, cur_C_contrast_scalar, cur_mu in product(alpha_vals, 
                                                         C_vals, C_contrast_vals, mu_vals):
-            kf = KFold(X.shape[0], n_folds=5)
+            kf = KFold(X.shape[0], n_folds=5, random_state=10)
             scores_for_params = []
             for nested_train, nested_test in kf:
                 

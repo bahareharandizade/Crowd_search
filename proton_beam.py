@@ -571,7 +571,10 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
             q_train = np.matrix([np.array(q_m.predict_proba(X_train))[:,1] for q_m in q_models]).T
 
             # bcw: introducing interaction features, too (9/29)
-            train_q_fvs = np.zeros((X_train.shape[0], 5))
+            # NOTE this seems to increase sens. at the expense of
+            # a drop in spec. 
+            # might also try adding three-level interaction feature!
+            train_q_fvs = np.zeros((X_train.shape[0], 4))
 
             train_q_fvs[:,0] = q_train[:,0].T
             train_q_fvs[:,1] = q_train[:,1].T
@@ -579,7 +582,10 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
 
             ### 9/28
             train_q_fvs[:,3] = np.multiply(q_train[:,0], q_train[:,1]).T
-            train_q_fvs[:,4] = np.multiply(q_train[:,0], q_train[:,2]).T
+            # 3-way interaction feature
+            train_q_fvs[:,3] = np.multiply(train_q_fvs[:,3], q_train[:,2].T)
+
+            #train_q_fvs[:,4] = np.multiply(q_train[:,0], q_train[:,2]).T
 
             # also introduce
 
@@ -601,7 +607,7 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
 
 
 
-            test_q_fvs = np.zeros((X_test.shape[0], 5)) # was 3.
+            test_q_fvs = np.zeros((X_test.shape[0], 4)) # was 3.
             #pdb.set_trace()
             test_q_fvs[:,0] = q_predictions[:,0].T
             test_q_fvs[:,1] = q_predictions[:,1].T
@@ -610,9 +616,12 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
             #test_q_fvs[:,6] = 1-q_predictions[:,2].T
             #test_q_fvs[:,7] = q_predictions[:,2].T
 
+
             # bcw: interaction features (9/28)
             test_q_fvs[:,3] = np.multiply(q_predictions[:,0], q_predictions[:,1]).T
-            test_q_fvs[:,4] = np.multiply(q_predictions[:,0], q_predictions[:,2]).T
+            #pdb.set_trace()
+            test_q_fvs[:,3] = np.multiply(test_q_fvs[:,3], q_predictions[:,2].T)
+            #test_q_fvs[:,4] = np.multiply(q_predictions[:,0], q_predictions[:,2]).T
 
             # populate test
 

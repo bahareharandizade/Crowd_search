@@ -86,7 +86,7 @@ class ARModel():
         y = np.array(y)
 
         print "Initiating parallel KFolds"
-        result = Parallel(n_jobs=20)(delayed(self.parallelKFold)(self,
+        result = Parallel(n_jobs=20)(delayed(parallelKFold)(self,
                                                            X,
                                                            y,
                                                            cur_alpha,
@@ -146,73 +146,6 @@ class ARModel():
         clf.fit(X, y, sample_weight=instance_weights)
         self.clf = clf
 
-    def parallelKFold(self, X, y, cur_alpha, cur_C, cur_C_contrast_scalar, cur_mu):
-        kf = KFold(X.shape[0], n_folds=5, random_state=10)
-        scores_for_params = []
-        for nested_train, nested_test in kf:
-
-            cur_X_train = X[nested_train,:]
-            #pdb.set_trace()
-            cur_y_train = y[nested_train]
-
-            cur_X_test = X[nested_test,:]
-            cur_y_test = y[nested_test]
-
-            # standard C for non-contrastive instances
-            instance_weights = np.ones(cur_X_train.shape[0]) * self.C
-
-
-            # now append pseudo instances to the training data!
-            # note that we scale these by cur_mu!
-            cur_X_train = sp.sparse.vstack((cur_X_train, self.pos_pseudo_examples/cur_mu))
-            cur_y_train = np.hstack((cur_y_train, np.ones(self.pos_pseudo_examples.shape[0])))
-
-
-            cur_X_train = sp.sparse.vstack((cur_X_train, self.neg_pseudo_examples/cur_mu))
-            cur_y_train = np.hstack((cur_y_train, -1*np.ones(self.neg_pseudo_examples.shape[0])))
-
-            total_contrastive_count = self.pos_pseudo_examples.shape[0] + self.neg_pseudo_examples.shape[0]
-            #cur_instance_weights = np.hstack((instance_weights,
-            #                        np.ones(total_contrastive_count) * cur_C * cur_C_contrast_scalar))
-            contrast_weights = np.ones(total_contrastive_count) * cur_C * cur_C_contrast_scalar
-
-
-            if self.worker_qualities is not None:
-                # then also scale by worker quality!
-                for i in xrange(self.pos_pseudo_examples.shape[0]):
-                    worker_id = self.psuedo_pos_workers[i]#self.pos_worker_ids[i]
-                    worker_quality = self.worker_qualities[worker_id]
-                    contrast_weights[i] = contrast_weights[i] #* (worker_quality**2)
-
-                for i in xrange(self.neg_pseudo_examples.shape[0]):
-                    worker_id = self.psuedo_neg_workers[i]#self.neg_worker_ids[i]
-                    worker_quality = self.worker_qualities[worker_id]
-                    cur_idx = self.pos_pseudo_examples.shape[0]+i
-                    contrast_weights[cur_idx] = contrast_weights[cur_idx] #* (worker_quality**2)
-
-
-            cur_instance_weights = np.hstack((instance_weights, contrast_weights))
-
-            clf = SGDClassifier(class_weight="auto", loss=self.loss, shuffle=True, alpha=cur_alpha)
-            clf.fit(cur_X_train, cur_y_train, sample_weight=cur_instance_weights)
-
-            preds = clf.predict(cur_X_test)
-            # we convert to 0/1 loss here
-            errors = np.abs((1+cur_y_test)/2.0 - (1+preds)/2.0)
-
-            # auto-set weights to equal
-            lambda_ = len(cur_y_test[cur_y_test<=0])/float(len(cur_y_test[cur_y_test>0]))
-            #print "errors: %s; lambda: %s" % (errors, lambda_)
-
-            errors[cur_y_test==1] = errors[cur_y_test==1]*lambda_
-            #pdb.set_trace()
-            cur_score = np.sum(errors)
-            scores_for_params.append(cur_score)
-
-        #key = "%s-%s-%s-%s"  % (cur_mu, cur_alpha, cur_C, cur_C_contrast_scalar)
-        params = {'mu': cur_mu, 'alpha': cur_alpha, 'C': cur_C, 'C_contrast_scalar': cur_C_contrast_scalar}
-        score = np.mean(scores_for_params)
-        return {score: params}
 
     def fit(self, X, y):
         '''
@@ -300,6 +233,74 @@ class ARModel():
             setattr(self, parameter, value)
         return self 
 
+
+def parallelKFold(self, X, y, cur_alpha, cur_C, cur_C_contrast_scalar, cur_mu):
+    kf = KFold(X.shape[0], n_folds=5, random_state=10)
+    scores_for_params = []
+    for nested_train, nested_test in kf:
+
+        cur_X_train = X[nested_train,:]
+        #pdb.set_trace()
+        cur_y_train = y[nested_train]
+
+        cur_X_test = X[nested_test,:]
+        cur_y_test = y[nested_test]
+
+        # standard C for non-contrastive instances
+        instance_weights = np.ones(cur_X_train.shape[0]) * self.C
+
+
+        # now append pseudo instances to the training data!
+        # note that we scale these by cur_mu!
+        cur_X_train = sp.sparse.vstack((cur_X_train, self.pos_pseudo_examples/cur_mu))
+        cur_y_train = np.hstack((cur_y_train, np.ones(self.pos_pseudo_examples.shape[0])))
+
+
+        cur_X_train = sp.sparse.vstack((cur_X_train, self.neg_pseudo_examples/cur_mu))
+        cur_y_train = np.hstack((cur_y_train, -1*np.ones(self.neg_pseudo_examples.shape[0])))
+
+        total_contrastive_count = self.pos_pseudo_examples.shape[0] + self.neg_pseudo_examples.shape[0]
+        #cur_instance_weights = np.hstack((instance_weights,
+        #                        np.ones(total_contrastive_count) * cur_C * cur_C_contrast_scalar))
+        contrast_weights = np.ones(total_contrastive_count) * cur_C * cur_C_contrast_scalar
+
+
+        if self.worker_qualities is not None:
+            # then also scale by worker quality!
+            for i in xrange(self.pos_pseudo_examples.shape[0]):
+                worker_id = self.psuedo_pos_workers[i]#self.pos_worker_ids[i]
+                worker_quality = self.worker_qualities[worker_id]
+                contrast_weights[i] = contrast_weights[i] #* (worker_quality**2)
+
+            for i in xrange(self.neg_pseudo_examples.shape[0]):
+                worker_id = self.psuedo_neg_workers[i]#self.neg_worker_ids[i]
+                worker_quality = self.worker_qualities[worker_id]
+                cur_idx = self.pos_pseudo_examples.shape[0]+i
+                contrast_weights[cur_idx] = contrast_weights[cur_idx] #* (worker_quality**2)
+
+
+        cur_instance_weights = np.hstack((instance_weights, contrast_weights))
+
+        clf = SGDClassifier(class_weight="auto", loss=self.loss, shuffle=True, alpha=cur_alpha)
+        clf.fit(cur_X_train, cur_y_train, sample_weight=cur_instance_weights)
+
+        preds = clf.predict(cur_X_test)
+        # we convert to 0/1 loss here
+        errors = np.abs((1+cur_y_test)/2.0 - (1+preds)/2.0)
+
+        # auto-set weights to equal
+        lambda_ = len(cur_y_test[cur_y_test<=0])/float(len(cur_y_test[cur_y_test>0]))
+        #print "errors: %s; lambda: %s" % (errors, lambda_)
+
+        errors[cur_y_test==1] = errors[cur_y_test==1]*lambda_
+        #pdb.set_trace()
+        cur_score = np.sum(errors)
+        scores_for_params.append(cur_score)
+
+    #key = "%s-%s-%s-%s"  % (cur_mu, cur_alpha, cur_C, cur_C_contrast_scalar)
+    params = {'mu': cur_mu, 'alpha': cur_alpha, 'C': cur_C, 'C_contrast_scalar': cur_C_contrast_scalar}
+    score = np.mean(scores_for_params)
+    return {score: params}
 
 def _generate_pseudo_examples(X, X_rationales, rationale_worker_ids=None, mu=1):
     print "-- generating instances for %s rationales --" % X_rationales.shape[0]

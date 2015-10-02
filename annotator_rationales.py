@@ -85,7 +85,7 @@ class ARModel():
 
         y = np.array(y)
 
-        result = Parallel(n_jobs=5)(delayed(parallelKFold)(self,
+        result = Parallel(n_jobs=20)(delayed(self.parallelKFold)(self,
                                                            X,
                                                            y,
                                                            cur_alpha,

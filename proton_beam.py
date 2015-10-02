@@ -272,7 +272,7 @@ def get_SGD(class_weight="auto", loss="log", random_state=None, fit_params=None)
     
     q_model = SGDClassifier(class_weight=class_weight, loss=loss, random_state=random_state)
 
-    clf = GridSearchCV(q_model, params_d, scoring='f1', fit_params=fit_params)
+    clf = GridSearchCV(q_model, params_d, scoring='f1', fit_params=fit_params, n_jobs=30)
     return clf 
 
 def get_svm(y):
@@ -280,7 +280,7 @@ def get_svm(y):
     gamma_range = np.logspace(-9, 3, 13)
     param_grid = dict(gamma=gamma_range, C=C_range)
     cv = StratifiedShuffleSplit(y, n_iter=5, test_size=0.2, random_state=42)
-    clf = GridSearchCV(SVC(class_weight="auto"), param_grid=param_grid, cv=cv, scoring="f1")
+    clf = GridSearchCV(SVC(class_weight="auto"), param_grid=param_grid, cv=cv, scoring="f1", n_jobs=30)
 
     return clf
 
@@ -486,7 +486,7 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
             params_d = {"alpha": 10.0**-np.arange(0,7)}
             #class_weight="auto",  further boosts sensitivity...
             q_model = SGDClassifier(class_weight="auto", loss="hinge", random_state=42)
-            m = GridSearchCV(q_model, params_d, scoring='f1')
+            m = GridSearchCV(q_model, params_d, scoring='f1', n_jobs=30)
 
             #m = get_SGD()
             print "fittting predictions model... "
@@ -1046,7 +1046,7 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer,
                 #weights = [0 for w_id in worker_ids]
 
             clf = GridSearchCV(q_model, params_d, scoring='f1', 
-                                fit_params={'sample_weight':weights}, n_jobs=20)
+                                fit_params={'sample_weight':weights}, n_jobs=30)
             
             clf.fit(q_X_train, q_lbls)#sample_weight=weights)
             #best_clf = clf.estimator 

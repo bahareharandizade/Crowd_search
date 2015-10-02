@@ -86,7 +86,7 @@ class ARModel():
         y = np.array(y)
 
         print "Initiating parallel KFolds"
-        result = Parallel(n_jobs=20)(delayed(parallelKFold)(self,
+        result = Parallel(n_jobs=30, verbose=5)(delayed(parallelKFold)(self,
                                                            X,
                                                            y,
                                                            cur_alpha,
@@ -95,7 +95,7 @@ class ARModel():
                                                            cur_mu)
                                     for cur_alpha, cur_C, cur_C_contrast_scalar, cur_mu
                                     in product(alpha_vals, C_vals, C_contrast_vals, mu_vals))
-        parameterScores = {k:v for k,v in (x.split(':') for x in result)}
+        parameterScores = dict(result)
         best_score = min(k for k, v in parameterScores.iteritems())
         bestParams = parameterScores[best_score]
         mu_star = bestParams['mu']
@@ -300,7 +300,7 @@ def parallelKFold(self, X, y, cur_alpha, cur_C, cur_C_contrast_scalar, cur_mu):
     #key = "%s-%s-%s-%s"  % (cur_mu, cur_alpha, cur_C, cur_C_contrast_scalar)
     params = {'mu': cur_mu, 'alpha': cur_alpha, 'C': cur_C, 'C_contrast_scalar': cur_C_contrast_scalar}
     score = np.mean(scores_for_params)
-    return {score: params}
+    return (score, params)
 
 def _generate_pseudo_examples(X, X_rationales, rationale_worker_ids=None, mu=1):
     print "-- generating instances for %s rationales --" % X_rationales.shape[0]

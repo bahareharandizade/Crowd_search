@@ -1046,7 +1046,7 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer,
                 #weights = [0 for w_id in worker_ids]
 
             clf = GridSearchCV(q_model, params_d, scoring='f1', 
-                                fit_params={'sample_weight':weights})
+                                fit_params={'sample_weight':weights}, n_jobs=20)
             
             clf.fit(q_X_train, q_lbls)#sample_weight=weights)
             #best_clf = clf.estimator 

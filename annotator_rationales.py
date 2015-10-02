@@ -85,6 +85,7 @@ class ARModel():
 
         y = np.array(y)
 
+        print "Initiating parallel KFolds"
         result = Parallel(n_jobs=20)(delayed(self.parallelKFold)(self,
                                                            X,
                                                            y,

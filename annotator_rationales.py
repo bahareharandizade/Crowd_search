@@ -316,8 +316,8 @@ def _generate_pseudo_examples(self, X, X_rationales, rationale_worker_ids=None, 
                                                                                        rationale_worker_ids,
                                                                                        mu)
                                                      for i in xrange(X.shape[0]))
-    contrast_instances = [i[0] for i in results]
-    workers = [i[1] for i in results]
+    contrast_instances = [i['instances'] for i in results]
+    workers = [i['workers'] for i in results]
     return sp.sparse.vstack(contrast_instances), workers
 
 
@@ -342,9 +342,9 @@ def _parallelPseudoExamples(i, X, X_rationales, rationale_worker_ids, mu):
             pseudoexample = X[i].copy()
             pseudoexample[0,shared_nonzero_indices] = 0
 
-            contrast_instances.extend(pseudoexample/mu)
-            workers.extend(worker)
-    return (contrast_instances, workers)
+            contrast_instances.append(pseudoexample/mu)
+            workers.append(worker)
+    return {'instances': contrast_instances, 'workers': workers}
 
 
 def _load_data(path):

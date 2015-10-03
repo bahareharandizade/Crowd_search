@@ -37,7 +37,7 @@ class ARModel():
                     pos_rationales_worker_ids=None, neg_rationales_worker_ids=None, 
                     worker_qualities=None,
                     C=1, C_contrast_scalar=.1, mu=1.0, alpha=0.01, 
-                    loss="log"):
+                    loss="log", n_jobs=1):
         '''
         Instantiate an Annotators' rationales model.
 
@@ -63,6 +63,7 @@ class ARModel():
         self.alpha = alpha
 
         self.loss = loss
+        self.n_jobs = n_jobs
         print "loss: %s" % (self.loss)
 
 
@@ -76,17 +77,17 @@ class ARModel():
         ###
         # also keep track of the workers associated with each
         # rational instance!
-        self.pos_pseudo_examples, self.psuedo_pos_workers = _generate_pseudo_examples(
+        self.pos_pseudo_examples, self.psuedo_pos_workers = _generate_pseudo_examples(self,
                                                                 X, self.X_pos_rationales,  
                                                                 self.pos_worker_ids,  1)
-        self.neg_pseudo_examples, self.psuedo_neg_workers = _generate_pseudo_examples(
+        self.neg_pseudo_examples, self.psuedo_neg_workers = _generate_pseudo_examples(self,
                                                                 X, self.X_neg_rationales,
                                                                 self.neg_worker_ids, 1)
 
         y = np.array(y)
 
         print "Initiating parallel KFolds"
-        result = Parallel(n_jobs=30, verbose=10)(delayed(parallelKFold)(self,
+        result = Parallel(n_jobs=self.n_jobs, verbose=10)(delayed(parallelKFold)(self,
                                                            X,
                                                            y,
                                                            cur_alpha,
@@ -182,8 +183,8 @@ class ARModel():
         # rationales associated with instances in the nested train set...
         # ignoring for now.
         if self.pos_pseudo_examples is None:
-            self.pos_pseudo_examples = _generate_pseudo_examples(X, self.X_pos_rationales, self.mu)
-            self.neg_pseudo_examples = _generate_pseudo_examples(X, self.X_neg_rationales, self.mu)
+            self.pos_pseudo_examples = _generate_pseudo_examples(self, X, self.X_pos_rationales, self.mu)
+            self.neg_pseudo_examples = _generate_pseudo_examples(self, X, self.X_neg_rationales, self.mu)
 
         #pos_pseudo_examples = _generate_pseudo_examples(X, self.X_pos_rationales, self.mu)
         #neg_pseudo_examples = _generate_pseudo_examples(X, self.X_neg_rationales, self.mu)
@@ -302,7 +303,7 @@ def parallelKFold(self, X, y, cur_alpha, cur_C, cur_C_contrast_scalar, cur_mu):
     score = np.mean(scores_for_params)
     return (score, params)
 
-def _generate_pseudo_examples(X, X_rationales, rationale_worker_ids=None, mu=1):
+def _generate_pseudo_examples(self, X, X_rationales, rationale_worker_ids=None, mu=1):
     print "-- generating instances for %s rationales --" % X_rationales.shape[0]
 
     contrast_instances = []
@@ -312,41 +313,41 @@ def _generate_pseudo_examples(X, X_rationales, rationale_worker_ids=None, mu=1):
     # iterate over training data, figure out which instances
     # we need to add contrast examples for (i.e., which 
     # instances contain tokens in the rationales).
-    for i in xrange(X.shape[0]):
-        # I'm certain there's a better way of doing this!
-        # but for now keeping it simple (and inefficient..)
-        X_i_nonzero = X[i].nonzero()[1]
-        results = Parallel(n_jobs=30,verbose=10)(delayed(_parallelPseudoExamples)(i,
-                                                                                  j,
-                                                                                  X,
-                                                                                  X_i_nonzero,
-                                                                                  X_rationales,
-                                                                                  rationale_worker_ids,
-                                                                                  mu)
-                                                 for j in xrange(X_rationales.shape[0]))
-        contrast_instances.extend([i[0] for i in filter(lambda x: x!=None, results)])
-        workers.extend([i[1] for i in filter(lambda x: x!=None, results)])
+    results = Parallel(n_jobs=self.n_jobs,verbose=10)(delayed(_parallelPseudoExamples)(i,
+                                                                                       X,
+                                                                                       X_rationales,
+                                                                                       rationale_worker_ids,
+                                                                                       mu)
+                                                     for i in xrange(X.shape[0]))
+    contrast_instances.extend([i[0] for i in filter(lambda x: x!=None, results)])
+    workers.extend([i[1] for i in filter(lambda x: x!=None, results)])
     return sp.sparse.vstack(contrast_instances), workers
 
 
-def _parallelPseudoExamples(i, j, X, X_i_nonzero, X_rationales, rationale_worker_ids, mu):
-    rationale_j_nonzero = X_rationales[j].nonzero()[1]
-    shared_nonzero_indices = np.intersect1d(X_i_nonzero, rationale_j_nonzero)
-    worker = None
-    if rationale_worker_ids is not None:
-        worker = rationale_worker_ids[j]
+def _parallelPseudoExamples(i, X, X_rationales, rationale_worker_ids, mu):
+    contrast_instances = []
+    workers = []
+    X_i_nonzero = X[i].nonzero()[1]
+    for j in xrange(X_rationales.shape[0]):
+        rationale_j_nonzero = X_rationales[j].nonzero()[1]
+        shared_nonzero_indices = np.intersect1d(X_i_nonzero, rationale_j_nonzero)
+        worker = None
+        if rationale_worker_ids is not None:
+            worker = rationale_worker_ids[j]
 
-    ### TMP TMP TMP
-    #if shared_nonzero_indices.shape[0] > 0:
-    #pdb.set_trace()
-    if shared_nonzero_indices.shape[0] == rationale_j_nonzero.shape[0]: # experimental!
-        # then introduce a contrast instance!
-        # i.e., maske out rationale
-        #print "ah ha!"
-        pseudoexample = X[i].copy()
-        pseudoexample[0,shared_nonzero_indices] = 0
+        ### TMP TMP TMP
+        #if shared_nonzero_indices.shape[0] > 0:
+        #pdb.set_trace()
+        if shared_nonzero_indices.shape[0] == rationale_j_nonzero.shape[0]: # experimental!
+            # then introduce a contrast instance!
+            # i.e., maske out rationale
+            #print "ah ha!"
+            pseudoexample = X[i].copy()
+            pseudoexample[0,shared_nonzero_indices] = 0
 
-        return (pseudoexample/mu, worker)
+            contrast_instances.append(pseudoexample/mu)
+            workers.append(worker)
+    return (constrast_instances, workers)
 
 
 def _load_data(path):

@@ -87,7 +87,7 @@ class ARModel():
         y = np.array(y)
 
         print "Initiating parallel KFolds"
-        result = Parallel(n_jobs=self.n_jobs, verbose=10)(delayed(parallelKFold)(self,
+        result = Parallel(n_jobs=self.n_jobs, verbose=50)(delayed(parallelKFold)(self,
                                                            X,
                                                            y,
                                                            cur_alpha,
@@ -306,21 +306,18 @@ def parallelKFold(self, X, y, cur_alpha, cur_C, cur_C_contrast_scalar, cur_mu):
 def _generate_pseudo_examples(self, X, X_rationales, rationale_worker_ids=None, mu=1):
     print "-- generating instances for %s rationales --" % X_rationales.shape[0]
 
-    contrast_instances = []
-    workers = []
-
     ##
     # iterate over training data, figure out which instances
     # we need to add contrast examples for (i.e., which 
     # instances contain tokens in the rationales).
-    results = Parallel(n_jobs=self.n_jobs,verbose=10)(delayed(_parallelPseudoExamples)(i,
+    results = Parallel(n_jobs=self.n_jobs,verbose=50)(delayed(_parallelPseudoExamples)(i,
                                                                                        X,
                                                                                        X_rationales,
                                                                                        rationale_worker_ids,
                                                                                        mu)
                                                      for i in xrange(X.shape[0]))
-    contrast_instances.extend([i[0] for i in results])
-    workers.extend([i[1] for i in filter(lambda x: x!=None, results)])
+    contrast_instances = [i[0] for i in results]
+    workers = [i[1] for i in results]
     return sp.sparse.vstack(contrast_instances), workers
 
 

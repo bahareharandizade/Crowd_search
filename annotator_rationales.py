@@ -319,7 +319,7 @@ def _generate_pseudo_examples(self, X, X_rationales, rationale_worker_ids=None, 
                                                                                        rationale_worker_ids,
                                                                                        mu)
                                                      for i in xrange(X.shape[0]))
-    contrast_instances.extend([i[0] for i in filter(lambda x: x!=None, results)])
+    contrast_instances.extend([i[0] for i in results])
     workers.extend([i[1] for i in filter(lambda x: x!=None, results)])
     return sp.sparse.vstack(contrast_instances), workers
 

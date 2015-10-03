@@ -347,7 +347,7 @@ def _parallelPseudoExamples(i, X, X_rationales, rationale_worker_ids, mu):
 
             contrast_instances.append(pseudoexample/mu)
             workers.append(worker)
-    return (constrast_instances, workers)
+    return (contrast_instances, workers)
 
 
 def _load_data(path):

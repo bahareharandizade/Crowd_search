@@ -86,7 +86,7 @@ class ARModel():
         y = np.array(y)
 
         print "Initiating parallel KFolds"
-        result = Parallel(n_jobs=30, verbose=5)(delayed(parallelKFold)(self,
+        result = Parallel(n_jobs=30, verbose=10)(delayed(parallelKFold)(self,
                                                            X,
                                                            y,
                                                            cur_alpha,
@@ -316,26 +316,38 @@ def _generate_pseudo_examples(X, X_rationales, rationale_worker_ids=None, mu=1):
         # I'm certain there's a better way of doing this!
         # but for now keeping it simple (and inefficient..)
         X_i_nonzero = X[i].nonzero()[1]
-        for j in xrange(X_rationales.shape[0]):
-            rationale_j_nonzero = X_rationales[j].nonzero()[1]
-            shared_nonzero_indices = np.intersect1d(X_i_nonzero, rationale_j_nonzero)
-            worker = None 
-            if rationale_worker_ids is not None: 
-                worker = rationale_worker_ids[j]
-            
-            ### TMP TMP TMP
-            #if shared_nonzero_indices.shape[0] > 0:
-            #pdb.set_trace()
-            if shared_nonzero_indices.shape[0] == rationale_j_nonzero.shape[0]: # experimental!
-                # then introduce a contrast instance!
-                # i.e., maske out rationale
-                #print "ah ha!"
-                pseudoexample = X[i].copy()
-                pseudoexample[0,shared_nonzero_indices] = 0
-
-                contrast_instances.append(pseudoexample/mu)
-                workers.append(worker)
+        results = Parallel(n_jobs=30,verbose=10)(delayed(_parallelPseudoExamples)(i,
+                                                                                  j,
+                                                                                  X,
+                                                                                  X_i_nonzero,
+                                                                                  X_rationales,
+                                                                                  rationale_worker_ids,
+                                                                                  mu)
+                                                 for j in xrange(X_rationales.shape[0]))
+        contrast_instances.extend([i[0] for i in results])
+        workers.extend([i[1] for i in results])
     return sp.sparse.vstack(contrast_instances), workers
+
+
+def _parallelPseudoExamples(i, j, X, X_i_nonzero, X_rationales, rationale_worker_ids, mu):
+    rationale_j_nonzero = X_rationales[j].nonzero()[1]
+    shared_nonzero_indices = np.intersect1d(X_i_nonzero, rationale_j_nonzero)
+    worker = None
+    if rationale_worker_ids is not None:
+        worker = rationale_worker_ids[j]
+
+    ### TMP TMP TMP
+    #if shared_nonzero_indices.shape[0] > 0:
+    #pdb.set_trace()
+    if shared_nonzero_indices.shape[0] == rationale_j_nonzero.shape[0]: # experimental!
+        # then introduce a contrast instance!
+        # i.e., maske out rationale
+        #print "ah ha!"
+        pseudoexample = X[i].copy()
+        pseudoexample[0,shared_nonzero_indices] = 0
+
+        return (pseudoexample/mu, worker)
+
 
 def _load_data(path):
     texts, labels, pmids = [], [], []

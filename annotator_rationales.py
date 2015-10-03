@@ -342,8 +342,8 @@ def _parallelPseudoExamples(i, X, X_rationales, rationale_worker_ids, mu):
             pseudoexample = X[i].copy()
             pseudoexample[0,shared_nonzero_indices] = 0
 
-            contrast_instances.append(pseudoexample/mu)
-            workers.append(worker)
+            contrast_instances.extend(pseudoexample/mu)
+            workers.extend(worker)
     return (contrast_instances, workers)
 
 

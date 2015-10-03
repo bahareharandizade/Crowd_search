@@ -845,7 +845,7 @@ def get_unique(rationales_d, worker_qualities):
     return unique_ids, unique_rationales
 
 
-def get_grouped_rationales_model(annotations, X, train_y, pmids, train_pmids, train_indices, vectorizer, use_worker_qualities=True, n_jobs=n_jobs):
+def get_grouped_rationales_model(annotations, X, train_y, pmids, train_pmids, train_indices, vectorizer, use_worker_qualities=True, n_jobs=1):
     pos_rationales_d, neg_rationales_d = defaultdict(list), defaultdict(list)
     overall_worker_quality_d = defaultdict(list)
 

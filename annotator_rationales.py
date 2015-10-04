@@ -10,7 +10,7 @@ Author: byron wallace
 '''
 import pdb
 import csv 
-from itertools import product
+from itertools import product, chain
 
 import scipy as sp 
 import numpy as np 
@@ -318,7 +318,7 @@ def _generate_pseudo_examples(self, X, X_rationales, rationale_worker_ids=None, 
                                                      for i in xrange(X.shape[0]))
     #contrast_instances = [i['instances'] for i in results]
     #workers = [i['workers'] for i in results]
-    return sp.sparse.vstack(contrast_instances), workers
+    return sp.sparse.vstack(list(chain(*contrast_instances))), list(chain(*workers))
 
 
 def _parallelPseudoExamples(i, X, X_rationales, rationale_worker_ids, mu):

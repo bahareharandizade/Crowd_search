@@ -310,14 +310,14 @@ def _generate_pseudo_examples(self, X, X_rationales, rationale_worker_ids=None, 
     # iterate over training data, figure out which instances
     # we need to add contrast examples for (i.e., which 
     # instances contain tokens in the rationales).
-    results = Parallel(n_jobs=self.n_jobs,verbose=50)(delayed(_parallelPseudoExamples)(i,
+    contrast_instances, workers = Parallel(n_jobs=self.n_jobs,verbose=50)(delayed(_parallelPseudoExamples)(i,
                                                                                        X,
                                                                                        X_rationales,
                                                                                        rationale_worker_ids,
                                                                                        mu)
                                                      for i in xrange(X.shape[0]))
-    contrast_instances = [i['instances'] for i in results]
-    workers = [i['workers'] for i in results]
+    #contrast_instances = [i['instances'] for i in results]
+    #workers = [i['workers'] for i in results]
     return sp.sparse.vstack(contrast_instances), workers
 
 
@@ -344,7 +344,7 @@ def _parallelPseudoExamples(i, X, X_rationales, rationale_worker_ids, mu):
 
             contrast_instances.append(pseudoexample/mu)
             workers.append(worker)
-    return {'instances': contrast_instances, 'workers': workers}
+    return contrast_instances, workers
 
 
 def _load_data(path):

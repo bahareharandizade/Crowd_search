@@ -143,7 +143,7 @@ class ARModel():
 
         instance_weights = np.hstack((instance_weights, contrast_weights))
 
-        clf = SGDClassifier(class_weight="auto", loss=self.loss, shuffle=True, alpha=alpha_star)
+        clf = SGDClassifier(class_weight="auto", loss=self.loss, random_state=42, shuffle=True, alpha=alpha_star)
         clf.fit(X, y, sample_weight=instance_weights)
         self.clf = clf
 
@@ -208,7 +208,7 @@ class ARModel():
 
         print "fitting model..."
 
-        clf = SGDClassifier(class_weight="auto", loss=self.loss, shuffle=True, alpha=self.alpha)
+        clf = SGDClassifier(class_weight="auto", loss=self.loss, random_state=42, shuffle=True, alpha=self.alpha)
         clf.fit(X, y, sample_weight=instance_weights)
         self.clf = clf
         print "ok. done."
@@ -236,7 +236,7 @@ class ARModel():
 
 
 def parallelKFold(self, X, y, cur_alpha, cur_C, cur_C_contrast_scalar, cur_mu):
-    kf = KFold(X.shape[0], n_folds=5, random_state=10)
+    kf = KFold(X.shape[0], n_folds=5, random_state=42)
     scores_for_params = []
     for nested_train, nested_test in kf:
 
@@ -282,7 +282,7 @@ def parallelKFold(self, X, y, cur_alpha, cur_C, cur_C_contrast_scalar, cur_mu):
 
         cur_instance_weights = np.hstack((instance_weights, contrast_weights))
 
-        clf = SGDClassifier(class_weight="auto", loss=self.loss, shuffle=True, alpha=cur_alpha)
+        clf = SGDClassifier(class_weight="auto", loss=self.loss, random_state=42, shuffle=True, alpha=cur_alpha)
         clf.fit(cur_X_train, cur_y_train, sample_weight=cur_instance_weights)
 
         preds = clf.predict(cur_X_test)
@@ -306,6 +306,9 @@ def parallelKFold(self, X, y, cur_alpha, cur_C, cur_C_contrast_scalar, cur_mu):
 def _generate_pseudo_examples(self, X, X_rationales, rationale_worker_ids=None, mu=1):
     print "-- generating instances for %s rationales --" % X_rationales.shape[0]
 
+    contrast_instances = []
+    workers = []
+
     ##
     # iterate over training data, figure out which instances
     # we need to add contrast examples for (i.e., which 
@@ -316,9 +319,13 @@ def _generate_pseudo_examples(self, X, X_rationales, rationale_worker_ids=None, 
                                                                                        rationale_worker_ids,
                                                                                        mu)
                                                      for i in xrange(X.shape[0]))
-    contrast_instances = [i[0] for i in results]
-    workers = [i[1] for i in results]
-    return sp.sparse.vstack(list(chain(*contrast_instances))), list(chain(*workers))
+    for i in results:
+        for ci in i[0]:
+            contrast_instances.append(ci)
+        for w in i[1]:
+            workers.append(w)
+    
+    return sp.sparse.vstack(contrast_instances), workers
 
 
 def _parallelPseudoExamples(i, X, X_rationales, rationale_worker_ids, mu):
@@ -361,7 +368,7 @@ def _load_data(path):
 def _get_baseline_SGD():
     params_d = {"alpha": 10.0**-np.arange(1,7)}
 
-    sgd = SGDClassifier(class_weight="auto")
+    sgd = SGDClassifier(class_weight="auto", random_state=42)
     clf = GridSearchCV(sgd, params_d, scoring='f1')
     return clf
 

@@ -265,22 +265,22 @@ def get_q_rationales(data, qnum, pmids=None):
     return list(set(pos_rationales)), list(set(neg_rationales))
 '''
 
-def get_SGD(class_weight="auto", loss="log", random_state=None, fit_params=None):
+def get_SGD(class_weight="auto", loss="log", random_state=None, fit_params=None, n_jobs=1):
     #C_range = np.logspace(-2, 10, 13)
     #return SGDClassifier(penalty=None)#, class_weight="auto")
     params_d = {"alpha": 10.0**-np.arange(0,7)}
     
-    q_model = SGDClassifier(class_weight=class_weight, loss=loss, random_state=random_state)
+    q_model = SGDClassifier(class_weight=class_weight, loss=loss, random_state=random_state, n_jobs=n_jobs)
 
-    clf = GridSearchCV(q_model, params_d, scoring='f1', fit_params=fit_params)
+    clf = GridSearchCV(q_model, params_d, scoring='f1', fit_params=fit_params, n_jobs=n_jobs)
     return clf 
 
-def get_svm(y):
+def get_svm(y, n_jobs=1):
     C_range = np.logspace(-2, 10, 13)
     gamma_range = np.logspace(-9, 3, 13)
     param_grid = dict(gamma=gamma_range, C=C_range)
     cv = StratifiedShuffleSplit(y, n_iter=5, test_size=0.2, random_state=42)
-    clf = GridSearchCV(SVC(class_weight="auto"), param_grid=param_grid, cv=cv, scoring="f1")
+    clf = GridSearchCV(SVC(class_weight="auto"), param_grid=param_grid, cv=cv, scoring="f1", n_jobs=n_jobs)
 
     return clf
 
@@ -337,7 +337,7 @@ def cartesian(arrays, out=None):
 
 
 
-def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
+def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, n_jobs=1):
     ##
     # basics: just load in the data + labels, vectorize
     annotations = load_protonbeam_annotations()
@@ -455,11 +455,12 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
             q_models = get_q_models(annotations, X_all, pmids, train_pmids,
                                     vectorizer, model=model,
                                     use_worker_qualities=use_worker_qualities,
-                                    use_rationales=False)
+                                    use_rationales=False,
+                                    n_jobs=n_jobs)
             q_train = np.matrix([np.array(q_m.predict_proba(X_all[train_indices]))[:,1] for q_m in q_models]).T
             #q_train = np.matrix([np.array(q_m.decision_function(X[train_indices])) for q_m in q_models]).T
             #m = get_svm(train_y)
-            m = get_SGD(class_weight=None, random_state=42)
+            m = get_SGD(class_weight=None, random_state=42, n_jobs=n_jobs)
 
             print "fittting stacked model... "
             m.fit(q_train, train_y)
@@ -475,7 +476,9 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
             # TODO(byron.wallace@utexas.edu): Also maybe a better name? cf-predictions was.. lazy.. sorry ;-)
             q_models = get_q_models(annotations, X_all, pmids, train_pmids,
                                 vectorizer, model=model,
-                                use_worker_qualities=use_worker_qualities)
+                                use_worker_qualities=use_worker_qualities,
+                                use_rationales=False,
+                                n_jobs=n_jobs)
 
             q_train = np.matrix([np.array(q_m.predict_proba(X_train))[:,1] for q_m in q_models]).T
 
@@ -485,8 +488,8 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
 
             params_d = {"alpha": 10.0**-np.arange(0,7)}
             #class_weight="auto",  further boosts sensitivity...
-            q_model = SGDClassifier(class_weight="auto", loss="hinge", random_state=42)
-            m = GridSearchCV(q_model, params_d, scoring='f1')
+            q_model = SGDClassifier(class_weight="auto", loss="hinge", random_state=42, n_jobs=n_jobs)
+            m = GridSearchCV(q_model, params_d, scoring='f1', n_jobs=n_jobs)
 
             #m = get_SGD()
             print "fittting predictions model... "
@@ -559,12 +562,14 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
                 q_models = get_q_models(annotations, X_all, pmids, train_pmids,
                                         vectorizer, model=model,
                                         use_worker_qualities=use_worker_qualities,
-                                        use_rationales=True)
+                                        use_rationales=True,
+                                        n_jobs=n_jobs)
             else:
                 q_models = get_q_models(annotations, X_all, pmids, train_pmids,
                                         vectorizer, model=model,
                                         use_worker_qualities=use_worker_qualities,
-                                        use_rationales=False)
+                                        use_rationales=False,
+                                        n_jobs=n_jobs)
 
             # we train on the predicted probabilities, rather than the observed labels, 
             # to sort of calibrate. 
@@ -639,7 +644,7 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
                     fv[q_index*3+1] = 1.0
             '''
 
-            m = get_SGD(loss="hinge", random_state=42)
+            m = get_SGD(loss="hinge", random_state=42, n_jobs=n_jobs)
 
             qa_matrix = np.matrix(answers_for_train_pmids)
             # augment X_train with question features?
@@ -658,7 +663,7 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
             aggregate_predictions = m.predict(X_test_new)
             #aggregate_predictions = m.predict(X_test)
         elif model == "cf-independent-responses":
-            m = get_SGD(loss="hinge", random_state=42)
+            m = get_SGD(loss="hinge", random_state=42, n_jobs=n_jobs)
             m.fit(X_train, train_y)
             #m.fit(X[train_indices], train_y)
             aggregate_predictions = m.predict(X_test)
@@ -671,11 +676,11 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
             if use_worker_qualities:
                 instance_quality_d = estimate_quality_instance_level(annotations, train_pmids)#get_M_overall(annotations, train_pmids)
                 worker_weights = [instance_quality_d[w] for w in train_worker_ids]
-                m = get_SGD(loss="hinge", random_state=42, fit_params={"sample_weight":worker_weights})
+                m = get_SGD(loss="hinge", random_state=42, fit_params={"sample_weight":worker_weights}, n_jobs=n_jobs)
                 #pdb.set_trace()
                 m.fit(X_train, train_y)
             else:
-                m = get_SGD(loss="hinge", random_state=42)
+                m = get_SGD(loss="hinge", random_state=42, n_jobs=n_jobs)
                 m.fit(X_train, train_y)
             #m.fit(X[train_indices], train_y)
             aggregate_predictions = m.predict(X_test)
@@ -684,7 +689,8 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False):
             m = get_grouped_rationales_model(
                 annotations, X_all, train_y, pmids, 
                 train_pmids, train_indices, vectorizer, 
-                use_worker_qualities=use_worker_qualities) 
+                use_worker_qualities=use_worker_qualities,
+                n_jobs=n_jobs)
             
             aggregate_predictions = m.predict(X_test)
         else:
@@ -839,7 +845,7 @@ def get_unique(rationales_d, worker_qualities):
     return unique_ids, unique_rationales
 
 
-def get_grouped_rationales_model(annotations, X, train_y, pmids, train_pmids, train_indices, vectorizer, use_worker_qualities=True):
+def get_grouped_rationales_model(annotations, X, train_y, pmids, train_pmids, train_indices, vectorizer, use_worker_qualities=True, n_jobs=1):
     pos_rationales_d, neg_rationales_d = defaultdict(list), defaultdict(list)
     overall_worker_quality_d = defaultdict(list)
 
@@ -906,7 +912,8 @@ def get_grouped_rationales_model(annotations, X, train_y, pmids, train_pmids, tr
     model = ar.ARModel(X_pos_rationales, X_neg_rationales,
                          pos_rationale_worker_ids, neg_rationale_worker_ids,
                          worker_qualities,
-                         loss="log")
+                         loss="log",
+                         n_jobs=n_jobs)
     print "cv fitting!!"
     X_train = X[train_indices]
     model.cv_fit(X_train, train_y, alpha_vals, C_vals, C_contrast_vals, mu_vals)
@@ -916,7 +923,7 @@ def get_grouped_rationales_model(annotations, X, train_y, pmids, train_pmids, tr
 
 
 def get_q_models(annotations, X, pmids, train_pmids, vectorizer, 
-                    model="cf-stacked", use_worker_qualities=True, use_rationales=False):
+                    model="cf-stacked", use_worker_qualities=True, use_rationales=False, n_jobs=1):
     q_models = []
     
     # note that we skip the last (4th) question because it
@@ -1029,7 +1036,8 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer,
             q_model = ar.ARModel(X_pos_rationales, X_neg_rationales,
                                  pos_rationale_worker_ids, neg_rationale_worker_ids,
                                  worker_qualities,
-                                 loss="log")
+                                 loss="log",
+                                 n_jobs=n_jobs)
             print "cv fitting!!"
             q_model.cv_fit(q_X_train, q_lbls, alpha_vals, C_vals, C_contrast_vals, mu_vals)
             q_models.append(q_model)
@@ -1037,7 +1045,7 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer,
         else:
             #pdb.set_trace()
             params_d = {"alpha": 10.0**-np.arange(1,7)}
-            q_model = SGDClassifier(class_weight=None, loss="log", random_state=42)
+            q_model = SGDClassifier(class_weight=None, loss="log", random_state=42, n_jobs=n_jobs)
 
             import random
             weights = None 
@@ -1046,7 +1054,7 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer,
                 #weights = [0 for w_id in worker_ids]
 
             clf = GridSearchCV(q_model, params_d, scoring='f1', 
-                                fit_params={'sample_weight':weights})
+                                fit_params={'sample_weight':weights}, n_jobs=n_jobs)
             
             clf.fit(q_X_train, q_lbls)#sample_weight=weights)
             #best_clf = clf.estimator 

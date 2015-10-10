@@ -391,14 +391,19 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, n_j
                         q3a = -1 if (q3 == "No" or q3 == "\\N") else 1
                         q2a = -1 if (q2 == '\\N' or (q2 != 'NoInfo' and q2 < 10)) else 1
                         train_y.append(q1a)
+                        train_indices.append(i) # repeat the instance
                         train_y.append(q2a)
+                        train_indices.append(i) # repeat the instance
                         train_y.append(q3a)
+                        train_indices.append(i) # repeat the instance
                         train_y.append(q4a)
+                        train_indices.append(i) # repeat the instance
                     else:
                         question_answers_txt = question_answers[['q1', 'q3', 'q4']].values[0]
                         question_answer_num = question_answers[['q2']].values[0][0]
                         final_answer = -1 if ("No" in question_answers_txt or "\\N" in question_answers_txt or (question_answer_num == '\\N' or (question_answer_num != 'NoInfo' and question_answer_num < 10))) else 1
                         train_y.append(final_answer)
+                        train_indices.append(i) # repeat the instance
 
                     train_worker_ids.append(worker)
 

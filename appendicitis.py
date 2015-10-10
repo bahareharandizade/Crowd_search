@@ -422,17 +422,9 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, n_j
                                 q_fv[q_index] = 1.0
                     #pdb.set_trace()
                     answers_for_train_pmids.append(q_fv)
-            else:
-                ###
-                # bcw: note! we are *training* with respect
-                # to level-1 labels, but then *testing* with
-                # respect to level-2, which in practice makes
-                # sense, but might seem a little odd to others.
-                # in the past, we've trained and tested on
-                # just level 1 to keep things simple.
-                for pmid in test_pmids:
-                    lbl = 1 if pmid in lvl1_pmids else -1
-                    test_y.append(lbl)
+            elif pmid in test_pmids:
+                lbl = 1 if pmid in lvl1_pmids else -1
+                test_y.append(lbl)
 
         vectorizer = TfidfVectorizer(stop_words="english", ngram_range=(1,2), min_df=3, max_features=50000)
 

@@ -31,8 +31,12 @@ import annotator_rationales as ar
 STOP_WORDS = [l.replace("\n", "") for l in open("pubmed.stoplist", 'rU').readlines()]
 HEADERS = ['workerId', 'experimentId', 'hitId', 'documentId', 'q1', 'q2', 'q3', 'q4', 'q1keys', 'q2keys', 'q3keys', 'q4keys', 'q1cust', 'q2cust', 'q3cust', 'q4cust', 'q1_norationales_expl', 'q2_norationales_expl', 'q3_norationales_expl', 'q4_norationales_expl', 'q1_norationales_reverse', 'q2_norationales_reverse', 'q3_norationales_reverse', 'q4_norationales_reverse', 'comments', 'honeypotId', 'honeypotPass', 'qualificationTest', 'timeUsed', 'ts']
 
-def load_appendicitis_annotations(annotations_path="fullscale-data/appendicitis.csv"):
-    annotations = pd.read_csv("fullscale-data/appendicitis.csv", delimiter="\t", header=None)
+def load_appendicitis_annotations(annotations_path="fullscale-data/appendicitis.csv", use_grouped_data=False):
+    annotations = None
+    if use_grouped_data:
+        annotations = pd.read_csv("fullscale-data/appendicitis_grouped.csv", delimiter="\t", header=None)
+    else:
+        annotations = pd.read_csv("fullscale-data/appendicitis.csv", delimiter="\t", header=None)
     annotations.columns = HEADERS
     return annotations
 
@@ -86,18 +90,24 @@ def flatten_rationales(all_rationales, workers):
     return rationales_flat, workers_extended
 
 
-def get_M_overall(annotations, train_pmids):
+def get_M_overall(annotations, train_pmids, use_grouped_data=False):
     rows_list = []
 
     for pmid in train_pmids:
         all_annotations_for_pmid = annotations[annotations['documentId'] == pmid]
         for worker, question_answers in all_annotations_for_pmid.groupby("workerId"):
-            question_answers_txt = question_answers[['q1', 'q3', 'q4']].values[0]
-            question_answer_num = question_answers[['q2']].values[0][0]
-            final_answer = 3 if (
-                    "No" in question_answers_txt or "\\N" in question_answers_txt or (
-                    question_answer_num == '\\N' or 
-                    (question_answer_num != 'NoInfo' and question_answer_num < 10))) else 4
+            final_answer = None
+            if use_grouped_data:
+                question_answer = question_answers[['q1']].values[0]
+                final_answer = 3 if ('No' in question_answer) else 4
+            else:
+                question_answers_txt = question_answers[['q1', 'q3', 'q4']].values[0]
+                question_answer_num = question_answers[['q2']].values[0][0]
+                final_answer = 3 if (
+                        "No" in question_answers_txt or "\\N" in question_answers_txt or (
+                        question_answer_num == '\\N' or
+                        (question_answer_num != 'NoInfo' and question_answer_num < 10))) else 4
+
             row_d = {"workerId":worker, "label":final_answer, "documentId":pmid}
             rows_list.append(row_d)
 
@@ -106,13 +116,13 @@ def get_M_overall(annotations, train_pmids):
     #pdb.set_trace()
     pivoted = doc_annos.pivot(index="documentId", columns="workerId")
     pivoted = pivoted.fillna(2)
-    m = pd.DataFrame.as_matrix(pivoted)    
+    m = pd.DataFrame.as_matrix(pivoted)
     workers = list(pivoted['label'].keys())
-    return m, workers 
+    return m, workers
     
 
-def estimate_quality_instance_level(annotations, pmids):
-    m, workers = get_M_overall(annotations, pmids)
+def estimate_quality_instance_level(annotations, pmids, use_grouped_data=False):
+    m, workers = get_M_overall(annotations, pmids, use_grouped_data)
     instance_model = ModelB.create_initial_state(2, len(workers))
     anno = AnnotationsContainer.from_array(m, missing_values=[2])
     instance_model.map(anno.annotations) 
@@ -338,10 +348,10 @@ def cartesian(arrays, out=None):
 
 
 
-def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, n_jobs=1, n_folds=5):
+def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, n_jobs=1, n_folds=5, use_grouped_data=False):
     ##
     # basics: just load in the data + labels, vectorize
-    annotations = load_appendicitis_annotations()
+    annotations = load_appendicitis_annotations(use_grouped_data)
     lvl1_pmids, lvl2_pmids = read_lbls()
 
     # Data
@@ -390,6 +400,8 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, n_j
                     # as a function of their question decisions
 
                     if model == "cf-independent-responses":
+                        if use_grouped_data:
+                            raise NotImplementedError("No CF methods are compatible with grouped data.")
                         q1 = question_answers[['q1']].values[0]
                         q2 = question_answers[['q2']].values[0]
                         q3 = question_answers[['q3']].values[0]
@@ -417,9 +429,18 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, n_j
                         train_worker_ids.append(worker)
                         train_worker_ids.append(worker)
                     else:
-                        question_answers_txt = question_answers[['q1', 'q3', 'q4']].values[0]
-                        question_answer_num = question_answers[['q2']].values[0][0]
-                        final_answer = -1 if ("No" in question_answers_txt or "\\N" in question_answers_txt or (question_answer_num == '\\N' or (question_answer_num != 'NoInfo' and question_answer_num < 10))) else 1
+                        final_answer = None
+                        if use_grouped_data:
+                            question_answer = question_answers[['q1']].values[0]
+                            final_answer = -1 if ("No" in question_answer) else 1
+                        else:
+                            question_answers_txt = question_answers[['q1', 'q3', 'q4']].values[0]
+                            question_answer_num = question_answers[['q2']].values[0][0]
+                            final_answer = -1 if ("No" in question_answers_txt or "\\N" in question_answers_txt or
+                                                  (question_answer_num == '\\N' or
+                                                   (question_answer_num != 'NoInfo' and question_answer_num < 10)))\
+                                              else 1
+
                         train_y.append(final_answer)
                         if skipFirst:
                             skipFirst = False
@@ -428,26 +449,27 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, n_j
 
                         train_worker_ids.append(worker)
 
-                    q_fv = np.zeros(3)#np.zeros(3*3) # unidentifiable if we have an intercept!
+                    if not use_grouped_data:
+                        q_fv = np.zeros(3)#np.zeros(3*3) # unidentifiable if we have an intercept!
 
-                    #for q_index, qa in enumerate(question_answers):
-                    for q_index, q_str in enumerate(["q1", "q3", "q4"]):
-                        qa = question_answers[q_str].values[0]
-                        # so would expect both to be negative
-                        # weights; errr possibly the missing
-                        # indicator could be slightly positive
-                        # as slight correction
-                        if qa == "\\N":
-                            q_fv[q_index] = .5 # unknown?
-                            #pass
-                            # q_fv[3*q_index+2] = 0#1.0 # missing indicator
-                        else:
-                            #if qa in ("No", "no"):
-                            #    q_fv[3*q_index] = 1.0
-                            if qa in ("Yes", "yes"):
-                                q_fv[q_index] = 1.0
-                    #pdb.set_trace()
-                    answers_for_train_pmids.append(q_fv)
+                        #for q_index, qa in enumerate(question_answers):
+                        for q_index, q_str in enumerate(["q1", "q3", "q4"]):
+                            qa = question_answers[q_str].values[0]
+                            # so would expect both to be negative
+                            # weights; errr possibly the missing
+                            # indicator could be slightly positive
+                            # as slight correction
+                            if qa == "\\N":
+                                q_fv[q_index] = .5 # unknown?
+                                #pass
+                                # q_fv[3*q_index+2] = 0#1.0 # missing indicator
+                            else:
+                                #if qa in ("No", "no"):
+                                #    q_fv[3*q_index] = 1.0
+                                if qa in ("Yes", "yes"):
+                                    q_fv[q_index] = 1.0
+                        #pdb.set_trace()
+                        answers_for_train_pmids.append(q_fv)
             elif pmid in test_pmids:
                 lbl = 1 if pmid in lvl1_pmids else -1
                 test_y.append(lbl)
@@ -461,6 +483,8 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, n_j
         #pdb.set_trace()
 
         if "cf" in model:
+            if use_grouped_data:
+                raise NotImplementedError("No CF methods are compatible with grouped data.")
             if model == "cf-stacked":
                 q_models = get_q_models(annotations, X_all, pmids, train_pmids,
                                         vectorizer, model=model,
@@ -684,7 +708,7 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, n_j
                 # grouped model; simpler case
 
                 if use_worker_qualities:
-                    instance_quality_d = estimate_quality_instance_level(annotations, train_pmids)#get_M_overall(annotations, train_pmids)
+                    instance_quality_d = estimate_quality_instance_level(annotations, train_pmids, use_grouped_data=use_grouped_data)#get_M_overall(annotations, train_pmids)
                     worker_weights = [instance_quality_d[w] for w in train_worker_ids]
                     m = get_SGD(loss="hinge", random_state=42, fit_params={"sample_weight":worker_weights}, n_jobs=n_jobs)
                     #pdb.set_trace()
@@ -700,6 +724,7 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, n_j
                     annotations, X_all, train_y, pmids,
                     train_pmids, train_indices, vectorizer,
                     use_worker_qualities=use_worker_qualities,
+                    use_grouped_data=use_grouped_data,
                     n_jobs=n_jobs)
 
                 aggregate_predictions = m.predict(X_test)
@@ -857,28 +882,30 @@ def get_unique(rationales_d, worker_qualities):
     return unique_ids, unique_rationales
 
 
-def get_grouped_rationales_model(annotations, X, train_y, pmids, train_pmids, train_indices, vectorizer, use_worker_qualities=True, n_jobs=1):
+def get_grouped_rationales_model(annotations, X, train_y, pmids, train_pmids, train_indices, vectorizer, use_worker_qualities=True, use_grouped_data=False, n_jobs=1):
     pos_rationales_d, neg_rationales_d = defaultdict(list), defaultdict(list)
     overall_worker_quality_d = defaultdict(list)
 
     ### note that q2 is an integer (population size..)
     ### so will ignore for now?
     for question_num in range(1,5):
-        if question_num == 2: # This is Proton beam specific.
+        if use_grouped_data and question_num != 1:
+            pass
+        elif question_num == 2: # This is Proton beam specific.
             # @TODO something else?
-            pass 
+            pass
         else:
-            # get worker quality estimates, which we'll use to 
+            # get worker quality estimates, which we'll use to
             # scale the rationales
             worker_qualities = estimate_quality_for_q(annotations, question_num, pmids=train_pmids)
-            
-            # average these? 
+
+            # average these?
             for w, w_q in worker_qualities.items():
                 overall_worker_quality_d[w].append(w_q)
 
-            # these are now dictionaries mapping rationales to 
+            # these are now dictionaries mapping rationales to
             # lists of workers that provided them
-            pos_rationales_d_q, neg_rationales_d_q = get_q_rationales(annotations, 
+            pos_rationales_d_q, neg_rationales_d_q = get_q_rationales(annotations,
                                                             question_num, pmids=train_pmids)
 
             pos_rationales_d.update(pos_rationales_d_q)
@@ -1063,7 +1090,7 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer,
             weights = None 
             if use_worker_qualities:
                 weights = [worker_qualities[w_id] for w_id in worker_ids]
-                #weights = [0 for w_id in worker_ids]
+
 
             clf = GridSearchCV(q_model, params_d, scoring='f1', 
                                 fit_params={'sample_weight':weights}, n_jobs=n_jobs)
@@ -1076,14 +1103,3 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer,
             q_models.append(clf)
 
     return q_models
-
-                # annotations[annotations['documentId'].isin(train_pmids)]['q1']
-'''
-def process_pilot_results(annotations_path = "pilot-data/pilotresults.csv"):
-    annotations = pd.read_csv("pilot-data/pilotresults.csv", delimiter="|", header=None)
-    annotations.columns = HEADERS
-
-    # for each question, assemble separate labels/rationales file
-    for q in range(1,5):
-        with open("qlabels")
-'''

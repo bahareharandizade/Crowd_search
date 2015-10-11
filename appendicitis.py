@@ -151,6 +151,7 @@ def get_M_q(data, qnum, pmids=None):
 def estimate_quality_for_q(annotations, qnum, pmids=None):
     m, workers = get_M_q(annotations, qnum, pmids=pmids)
     q_model = ModelB.create_initial_state(2, len(workers))
+    #pdb.set_trace()
     anno = AnnotationsContainer.from_array(m, missing_values=[2])
     
     q_model.map(anno.annotations)
@@ -343,24 +344,30 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, n_j
     annotations = load_appendicitis_annotations()
     lvl1_pmids, lvl2_pmids = read_lbls()
 
+    # Data
+    texts, pmids = load_texts_and_pmids()
+    vectorizer = TfidfVectorizer(stop_words="english", ngram_range=(1,2), min_df=3, max_features=50000)
+    X_all = vectorizer.fit_transform(texts)
+
     # Generating folds to evaluate annotations.
     unique_labeled_pmids = list(set(annotations['documentId']))
     folds = KFold(len(unique_labeled_pmids), n_folds=n_folds, random_state=42)
 
-    # we'll use all crowd annotated data as training.
+    # Array for extra training instances
+    cm = np.zeros(4)
     for train_indices, test_indices in folds:
+        #pdb.set_trace()
         # Split into training and testing PMIDs
         train_pmids = np.array(unique_labeled_pmids)[train_indices].tolist()
         test_pmids  = np.array(unique_labeled_pmids)[test_indices].tolist()
+
         train_y, test_y = [], []
         answers_for_train_pmids = []
 
         # Some grouped specific stuff
         train_worker_ids = [] # for grouped
 
-        # Gather all documents and PMIDS
-        texts, pmids = load_texts_and_pmids()
-
+        # Build train_y on questions and test_y on ground truth.
         for i, pmid in enumerate(pmids):
 
             if pmid in train_pmids:
@@ -377,6 +384,7 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, n_j
                 '''
 
                 q_decisions_for_pmid = annotations[annotations['documentId'] == pmid]
+                skipFirst = True
                 for worker, question_answers in q_decisions_for_pmid.groupby("workerId"):
                     # calculate the 'effective' label given by this worker,
                     # as a function of their question decisions
@@ -391,21 +399,34 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, n_j
                         q3a = -1 if (q3 == "No" or q3 == "\\N") else 1
                         q2a = -1 if (q2 == '\\N' or (q2 != 'NoInfo' and q2 < 10)) else 1
                         train_y.append(q1a)
-                        train_indices.append(i) # repeat the instance
                         train_y.append(q2a)
-                        train_indices.append(i) # repeat the instance
                         train_y.append(q3a)
-                        train_indices.append(i) # repeat the instance
                         train_y.append(q4a)
-                        train_indices.append(i) # repeat the instance
+
+                        if skipFirst:
+                            skipFirst = False
+                        else:
+                            train_indices = np.append(train_indices,i) # repeat the instance
+
+                        train_indices = np.append(train_indices,i) # repeat the instance
+                        train_indices = np.append(train_indices,i) # repeat the instance
+                        train_indices = np.append(train_indices,i) # repeat the instance
+
+                        train_worker_ids.append(worker)
+                        train_worker_ids.append(worker)
+                        train_worker_ids.append(worker)
+                        train_worker_ids.append(worker)
                     else:
                         question_answers_txt = question_answers[['q1', 'q3', 'q4']].values[0]
                         question_answer_num = question_answers[['q2']].values[0][0]
                         final_answer = -1 if ("No" in question_answers_txt or "\\N" in question_answers_txt or (question_answer_num == '\\N' or (question_answer_num != 'NoInfo' and question_answer_num < 10))) else 1
                         train_y.append(final_answer)
-                        train_indices.append(i) # repeat the instance
+                        if skipFirst:
+                            skipFirst = False
+                        else:
+                            train_indices = np.append(train_indices,i) # repeat the instance
 
-                    train_worker_ids.append(worker)
+                        train_worker_ids.append(worker)
 
                     q_fv = np.zeros(3)#np.zeros(3*3) # unidentifiable if we have an intercept!
 
@@ -431,15 +452,13 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, n_j
                 lbl = 1 if pmid in lvl1_pmids else -1
                 test_y.append(lbl)
 
-        vectorizer = TfidfVectorizer(stop_words="english", ngram_range=(1,2), min_df=3, max_features=50000)
-
-        X_all = vectorizer.fit_transform(texts)
 
         X_train = X_all[train_indices]
         X_test = X_all[test_indices]
         #pdb.set_trace()
         test_y = np.array(test_y)
         train_y = np.array(train_y)
+        #pdb.set_trace()
 
         if "cf" in model:
             if model == "cf-stacked":
@@ -648,9 +667,15 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, n_j
                 aggregate_predictions = m.predict(X_test_new)
                 #aggregate_predictions = m.predict(X_test)
             elif model == "cf-independent-responses":
-                m = get_SGD(loss="hinge", random_state=42, n_jobs=n_jobs)
-                m.fit(X_train, train_y)
-                #m.fit(X[train_indices], train_y)
+                if use_worker_qualities:
+                    # TODO: There's an error here. ValueError: Shapes of X and sample_weight do not match.
+                    instance_quality_d = estimate_quality_instance_level(annotations, train_pmids)
+                    worker_weights = [instance_quality_d[w] for w in train_worker_ids]
+                    m = get_SGD(loss="hinge", random_state=42, fit_params={"sample_weight":worker_weights}, n_jobs=n_jobs)
+                    m.fit(X_train, train_y)
+                else:
+                    m = get_SGD(loss="hinge", random_state=42, n_jobs=n_jobs)
+                    m.fit(X_train, train_y)
                 aggregate_predictions = m.predict(X_test)
             else:
                 raise NotImplementedError('No such method exists.')
@@ -913,9 +938,9 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer,
                     model="cf-stacked", use_worker_qualities=True, use_rationales=False, n_jobs=1):
     q_models = []
     
-    # note that we skip the last (4th) question because it
-    # is sample size!
-    for question_num in range(1,4):    
+    # Note we skip question 2 because it's numeric
+    # TODO: Generalize this, so we have a list of numeric questions to ignore
+    for question_num in [1,3,4]:
         # get worker quality estimates, which we'll use to 
         # scale the rationales
         worker_qualities = estimate_quality_for_q(annotations, 

@@ -776,13 +776,13 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False,
                                         use_worker_qualities=use_worker_qualities,
                                         use_rationales=False,
                                         n_jobs=n_jobs)
-                q_train = np.matrix([np.array(q_m.predict_proba(X_all[train_indices]))[:,1] for q_m in q_models]).T
+                q_train = np.matrix([np.array(q_m.predict_proba(X_train))[:,1] for q_m in q_models]).T
                 m = get_SGD(random_state=42, n_jobs=n_jobs)
 
                 print "fittting stacked model... "
                 m.fit(q_train, train_y)
 
-                q_predictions = np.matrix([np.array(q_m.predict_proba(X_all[test_indices])[:,1]) for q_m in q_models]).T
+                q_predictions = np.matrix([np.array(q_m.predict_proba(X_test)[:,1]) for q_m in q_models]).T
                 aggregate_predictions = m.predict(q_predictions)
             elif model == "cf-predictions":
                 # TODO(byron.wallace@utexas.edu): Please check this code is up to date. It's from an earlier revision.

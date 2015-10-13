@@ -41,7 +41,7 @@ def load_appendicitis_annotations(annotations_path="fullscale-data/appendicitis.
     return annotations
 
 def load_texts_and_pmids(citations_and_labels_path="fullscale-data/appendicitis_data.csv"):
-    appendicitis = pd.read_csv(citations_and_labels_path, delimiter=",")
+    appendicitis = pd.read_csv(citations_and_labels_path, delimiter="\t")
     texts = []
     for title, abstract in zip(appendicitis["title"].values, appendicitis["abstract"].values):
         # this means the title is missing (well, nan, which is a float)

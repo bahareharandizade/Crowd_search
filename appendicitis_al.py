@@ -4,6 +4,7 @@ import sys
 import pdb 
 import string 
 import math 
+import random
 from collections import defaultdict 
 import re 
 
@@ -440,27 +441,98 @@ def get_train_and_test_X_y(annotations, X_all, pmids, train_pmids, test_pmids,
     return X_train, train_y, X_test, test_y, answers_for_train_pmids, train_worker_ids
 
 
-def run_AL(): 
+def uncertainty(model, pool, already_selected_indices):
+    #train_mask = np.ones(X_train.shape[0])
+    #train_mask[cur_train_indices] = 0 # mask the things we've already selected
+    #cur_X_train = X_train[train_mask]
+    scores = model.predict_proba(pool)
+
+
+def run_AL(model, al_method, step_size, num_init_labels,
+            annotations, X_all, X_train, train_y, X_test, test_y,
+            pmids, train_pmids, vectorizer, use_grouped_data, 
+            use_worker_qualities, answers_for_train_pmids, 
+            train_worker_ids, n_jobs=1): 
     '''
-    Run active learning given a 
+    Run active learning given a model, al_method and train/test 
+    set. 
 
 
-    strategy -- active learning strategy name (string). one of: 
+    al_method -- active learning strategy name (string). one of: 
                 ["uncertainty sampling", ... (to be added)]
 
+    step_size -- how many examples to pick at each 'round' in al?
+
 
     '''
-    pass 
+
+    n_lbls_so_far = 0 
+    total_num_lbls_to_acquire = X_train.shape[0]
+
+    # maintain the learning curve -- right now,
+    # the complete confusion matrix at each step
+    learning_curve = []
+
+    # probably start by randomly selecting a few instances
+    # to have labeled -- may consider explicitly 
+    # starting wtih a balanced sample!
+    
+    cur_train_indices = np.random.choice(X_train.shape[0], num_init_labels, replace=False)
+    n_lbls = num_init_labels
+
+    while n_lbls < total_num_lbls_to_acquire:
+        
+        # once everything is labele, train the model and make predictions
+        aggregate_predictions, trained_model = _fit_and_make_predictions(
+                    model, annotations, X_all, X_train[cur_train_indices], 
+                    train_y[cur_train_indices], 
+                    X_test, pmids, train_pmids, vectorizer, 
+                    use_grouped_data, use_worker_qualities, 
+                    answers_for_train_pmids, train_worker_ids,
+                    return_model=True)
+
+        # how are we doing so far? 
+        # for future ref, we record the num lbls so 
+        # far and the confusion matrix.
+        learning_curve.append(
+            (n_lbls, sklearn.metrics.confusion_matrix(
+                test_y, aggregate_predictions).flatten()))
+
+        # now pick num_lbls_to_acquire instances still in
+        # the pool using the al_method!
+        # add the selected indices to the cur_train_indices
+        #
+        if model in ("cf-stacked", "cf-responses-as-features", "cf-responses-as-features-wr"):
+            # in these cases, we also need the question models, so unpack 
+            # these from the returned values.
+            q_models, trained_model = trained_model
+            # we need to make feature vectors for consumption
+            # by the `stacked' model
+            
+        ###
+        if al_method == "uncertainty":
+            pass 
+            # HERE IS WHERE WE NEED TO CALL uncertainty()
+
+        pdb.set_trace()
+
+
+        n_lbls = len(cur_train_indices)
+
+    return learning_curve
 
 
 def _fit_and_make_predictions(model, annotations, X_all, X_train, train_y, X_test, pmids, 
                                 train_pmids, vectorizer, use_grouped_data, 
                                 use_worker_qualities, answers_for_train_pmids, 
-                                train_worker_ids, n_jobs=1):
+                                train_worker_ids, n_jobs=1, return_model=False):
     ''' 
     fits the model specified by, er, model and then uses it to 
     make predictions 
     '''
+    
+    q_models = None  # will only be defined if stacked or responses-as-features
+
     if "cf" in model:
         if use_grouped_data:
             raise NotImplementedError("No CF methods are compatible with grouped data.")
@@ -581,7 +653,13 @@ def _fit_and_make_predictions(model, annotations, X_all, X_train, train_y, X_tes
     else:
         raise NotImplementedError('No such method exists.')
 
-    
+    if return_model:
+        if model in ("cf-stacked", "cf-responses-as-features", "cf-responses-as-features-wr"):
+            # then we also return the individual question models!
+            return aggregate_predictions, (q_models, m)
+        else:   
+            return aggregate_predictions, m 
+
     return aggregate_predictions
 
 
@@ -596,7 +674,8 @@ BCW notes (10/22/2015)
 
 '''
 def rationales_exp_all_active(model="cf-stacked", use_worker_qualities=False, 
-                            n_jobs=1, n_folds=5, use_grouped_data=False):
+                            n_jobs=1, n_folds=5, use_grouped_data=False, 
+                            al_method="uncertainy", step_size=20, num_init_labels=20):
     ##
     # basics: just load in the data + labels, vectorize
     annotations = load_appendicitis_annotations(use_grouped_data)
@@ -613,7 +692,6 @@ def rationales_exp_all_active(model="cf-stacked", use_worker_qualities=False,
     
     # Array for extra training instances
     cm = np.zeros(4)
-    
 
     for train_indices, test_indices in folds:
         
@@ -625,18 +703,15 @@ def rationales_exp_all_active(model="cf-stacked", use_worker_qualities=False,
                 annotations, X_all, pmids, train_pmids, test_pmids, 
                 model, lvl1_pmids, lvl2_pmids, use_grouped_data)
 
-        aggregate_predictions = _fit_and_make_predictions(
-                model, annotations, X_all, X_train, train_y, 
-                X_test, pmids, train_pmids, vectorizer, 
-                use_grouped_data, use_worker_qualities, 
-                answers_for_train_pmids, train_worker_ids)
-       
-        # Update statistics
-        #pdb.set_trace()
-        cm += sklearn.metrics.confusion_matrix(test_y, aggregate_predictions).flatten()
+        # now run active learning experiment over train/test split
+        cur_learning_curve = run_AL(model, al_method, step_size, num_init_labels,
+            annotations, X_all, X_train, train_y, X_test, test_y, pmids, 
+            train_pmids, vectorizer, use_grouped_data, 
+            use_worker_qualities, answers_for_train_pmids, 
+            train_worker_ids)
 
 
-    tn, fp, fn, tp = cm / float(n_folds)
+    #tn, fp, fn, tp = cm / float(n_folds)
 
     # tp, fp, fn, tn
 
@@ -850,7 +925,7 @@ def _get_q_models(annotations, X, pmids, train_pmids, vectorizer,
             params_d = {"alpha": 10.0**-np.arange(1,7)}
             q_model = SGDClassifier(class_weight=None, loss="log", random_state=42, n_jobs=n_jobs)
 
-            import random
+            
             weights = None 
             if use_worker_qualities:
                 weights = [worker_qualities[w_id] for w_id in worker_ids]

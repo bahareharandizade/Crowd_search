@@ -601,9 +601,11 @@ def rationales_exp_cv(model="cf-stacked", use_worker_qualities=False, n_jobs=1):
             raise NotImplementedError('No such method exists.')
     else:
         raise NotImplementedError('No such method exists.')
-    
+        
+
+    pdb.set_trace()
     cm = sklearn.metrics.confusion_matrix(test_y, aggregate_predictions).flatten()
-    #pdb.set_trace()
+    #
 
     tn, fp, fn, tp = cm 
 
@@ -640,7 +642,8 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False,
 
     # Generating folds to evaluate annotations.
     unique_labeled_pmids = list(set(annotations['documentId']))
-    folds = KFold(len(unique_labeled_pmids), n_folds=n_folds, shuffle=True)
+    folds = KFold(len(unique_labeled_pmids), n_folds=n_folds, 
+                    shuffle=True, random_state=42)
     
 
     # Array for extra training instances
@@ -886,7 +889,8 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False,
 
                 # we train on the predicted probabilities, rather than the observed labels,
                 # to sort of calibrate.
-                q_train = np.matrix([np.array(q_m.predict_proba(X_train))[:,1] for q_m in q_models]).T
+                q_train = np.matrix(
+                    [np.array(q_m.predict_proba(X_train))[:,1] for q_m in q_models]).T
 
                 # bcw: introducing interaction features, too (9/29)
                 # NOTE this seems to increase sens. at the expense of
@@ -1021,6 +1025,7 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False,
 
 
         # Update statistics
+        #pdb.set_trace()
         cm += sklearn.metrics.confusion_matrix(test_y, aggregate_predictions).flatten()
 
 

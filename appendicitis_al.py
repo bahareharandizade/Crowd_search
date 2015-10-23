@@ -441,14 +441,21 @@ def get_train_and_test_X_y(annotations, X_all, pmids, train_pmids, test_pmids,
     return X_train, train_y, X_test, test_y, answers_for_train_pmids, train_worker_ids
 
 
-def uncertainty(model, pool, already_selected_indices):
-    #train_mask = np.ones(X_train.shape[0])
-    #train_mask[cur_train_indices] = 0 # mask the things we've already selected
-    #cur_X_train = X_train[train_mask]
-    scores = model.predict_proba(pool)
+def uncertainty(model, pooled, already_selected_indices, batch_size):
+    # thus the lowest will be the closest to .5 (most uncertain)
+    scores = np.abs(.5 - model.predict_proba(pooled)[:,0])
+    already_selected_mask = np.zeros(pooled.shape[0])
+    already_selected_mask[already_selected_indices] = 1
+    scores[already_selected_indices] = np.inf
+    ranked_indices = np.argsort(scores)
+    return ranked_indices[:batch_size]
+
+def _pretty_print_d(d): 
+    for key, val in d.items(): 
+        print "%s: %s" % (key, val)
 
 
-def run_AL(model, al_method, step_size, num_init_labels,
+def run_AL(model, al_method, batch_size, num_init_labels,
             annotations, X_all, X_train, train_y, X_test, test_y,
             pmids, train_pmids, vectorizer, use_grouped_data, 
             use_worker_qualities, answers_for_train_pmids, 
@@ -458,12 +465,11 @@ def run_AL(model, al_method, step_size, num_init_labels,
     set. 
 
 
-    al_method -- active learning strategy name (string). one of: 
-                ["uncertainty sampling", ... (to be added)]
+    al_method       -- active learning strategy name (string). one of: 
+                        ["uncertainty sampling", ... (to be added)]
 
-    step_size -- how many examples to pick at each 'round' in al?
-
-
+    batch_size      -- how many examples to pick at each 'round' in al?
+    num_init_labels -- how many examples to label initially
     '''
 
     n_lbls_so_far = 0 
@@ -477,11 +483,11 @@ def run_AL(model, al_method, step_size, num_init_labels,
     # to have labeled -- may consider explicitly 
     # starting wtih a balanced sample!
     
-    cur_train_indices = np.random.choice(X_train.shape[0], num_init_labels, replace=False)
+    cur_train_indices = np.random.choice(X_train.shape[0], num_init_labels, replace=False).tolist()
     n_lbls = num_init_labels
 
     while n_lbls < total_num_lbls_to_acquire:
-        
+        #pdb.set_trace()
         # once everything is labele, train the model and make predictions
         aggregate_predictions, trained_model = _fit_and_make_predictions(
                     model, annotations, X_all, X_train[cur_train_indices], 
@@ -494,9 +500,19 @@ def run_AL(model, al_method, step_size, num_init_labels,
         # how are we doing so far? 
         # for future ref, we record the num lbls so 
         # far and the confusion matrix.
-        learning_curve.append(
-            (n_lbls, sklearn.metrics.confusion_matrix(
-                test_y, aggregate_predictions).flatten()))
+        tn, fp, fn, tp = sklearn.metrics.confusion_matrix(
+                                test_y, aggregate_predictions).flatten()
+
+        sensitivity, specificity, precision, f2measure = ar.compute_measures(tp, fp, fn, tn)
+        cur_results_d = {"sensitivity":sensitivity, "specificity":specificity,
+                            "precision":precision, "F2":f2measure}
+
+        learning_curve.append((n_lbls, cur_results_d))
+
+        # the candidate set will depend on the method;
+        # because in the case of stacked models, for example,
+        # the feature sets will be different.
+        candidate_set = X_train.copy()
 
         # now pick num_lbls_to_acquire instances still in
         # the pool using the al_method!
@@ -507,17 +523,31 @@ def run_AL(model, al_method, step_size, num_init_labels,
             # these from the returned values.
             q_models, trained_model = trained_model
             # we need to make feature vectors for consumption
-            # by the `stacked' model
-            
+            # by the `stacked' model; note that we make
+            # predictions for *all* instances -- including 
+            # those already in the selected set!
+            candidate_set = np.matrix(
+                [np.array(q_m.predict_proba(X_train)[:,1]) for q_m in q_models]).T
+
+
+        # this should be set to the set of instances in X_train
+        # to `label' next. 
+        to_label = None 
+
         ###
         if al_method == "uncertainty":
-            pass 
-            # HERE IS WHERE WE NEED TO CALL uncertainty()
+            to_label = uncertainty(trained_model, candidate_set, 
+                                    cur_train_indices, batch_size)
+        else: 
+            raise Exception("method not implemented!")
 
-        pdb.set_trace()
-
-
+        # now effectively `label' the selected instances.
+        cur_train_indices.extend(to_label)
         n_lbls = len(cur_train_indices)
+        print "labeled %s instances so far" % n_lbls
+        _pretty_print_d(cur_results_d)
+        print "\n---"
+
 
     return learning_curve
 
@@ -672,10 +702,11 @@ BCW notes (10/22/2015)
 * Similarly, test_ids constitute the evaluation set; not considered 
     during learning. 
 
+
 '''
 def rationales_exp_all_active(model="cf-stacked", use_worker_qualities=False, 
                             n_jobs=1, n_folds=5, use_grouped_data=False, 
-                            al_method="uncertainy", step_size=20, num_init_labels=20):
+                            al_method="uncertainty", batch_size=20, num_init_labels=100):
     ##
     # basics: just load in the data + labels, vectorize
     annotations = load_appendicitis_annotations(use_grouped_data)
@@ -688,10 +719,12 @@ def rationales_exp_all_active(model="cf-stacked", use_worker_qualities=False,
 
     # Generating folds (pool/not pool splits, here)
     unique_labeled_pmids = list(set(annotations['documentId']))
-    folds = KFold(len(unique_labeled_pmids), n_folds=n_folds, shuffle=True, random_state=42)
+    folds = KFold(len(unique_labeled_pmids), 
+                    n_folds=n_folds, shuffle=True, random_state=42)
     
     # Array for extra training instances
-    cm = np.zeros(4)
+    #cm = np.zeros(4)
+    learning_curves = []
 
     for train_indices, test_indices in folds:
         
@@ -704,31 +737,18 @@ def rationales_exp_all_active(model="cf-stacked", use_worker_qualities=False,
                 model, lvl1_pmids, lvl2_pmids, use_grouped_data)
 
         # now run active learning experiment over train/test split
-        cur_learning_curve = run_AL(model, al_method, step_size, num_init_labels,
+        cur_learning_curve = run_AL(model, al_method, batch_size, num_init_labels,
             annotations, X_all, X_train, train_y, X_test, test_y, pmids, 
             train_pmids, vectorizer, use_grouped_data, 
             use_worker_qualities, answers_for_train_pmids, 
             train_worker_ids)
 
+        learning_curves.append(cur_learning_curve)
 
-    #tn, fp, fn, tp = cm / float(n_folds)
-
-    # tp, fp, fn, tn
-
-    print "results on test set for model: %s." % model 
-    print "using worker quality estimates? %s" % use_worker_qualities
-    print "\n----" 
-
-    print "tn, fp, fn, tp"
-    print cm/float(n_folds)
-    sensitivity, specificity, precision, f2measure = ar.compute_measures(tp, fp, fn, tn)
-    print "sensitivity: %s" % sensitivity
-    print "specificity: %s" % specificity
-    print "precision: %s" % precision
-    # not the traditional F; we use spec instead 
-    # of precision!
-    print "F2: %s" % f2measure 
-    print "----"
+    ####
+    # this will be a list of length n_folds, where each entry is a list
+    # describing the results over active learning for this strategy
+    return learning_curves
 
 def get_unique(rationales_d, worker_qualities):
     unique_ids, unique_rationales = [], []

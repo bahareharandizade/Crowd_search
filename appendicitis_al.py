@@ -544,9 +544,13 @@ def run_AL(model, al_method, batch_size, num_init_labels,
         # now effectively `label' the selected instances.
         cur_train_indices.extend(to_label)
         n_lbls = len(cur_train_indices)
-        print "labeled %s instances so far" % n_lbls
-        _pretty_print_d(cur_results_d)
-        print "\n---"
+        
+        ### may want to update accordingly if you change
+        ### batchsize?
+        if (n_lbls % (batch_size * 10)) == 0: 
+            print "labeled %s instances so far" % n_lbls
+            _pretty_print_d(cur_results_d)
+            print "\n---"
 
 
     return learning_curve
@@ -562,6 +566,11 @@ def _fit_and_make_predictions(model, annotations, X_all, X_train, train_y, X_tes
     '''
     
     q_models = None  # will only be defined if stacked or responses-as-features
+
+    ###
+    # bcw: 10/23/15 -- switching to log-loss everywhere for AL implementation 
+    #                   so we can use predict_proba for uncertainties
+    ###
 
     if "cf" in model:
         if use_grouped_data:
@@ -628,7 +637,7 @@ def _fit_and_make_predictions(model, annotations, X_all, X_train, train_y, X_tes
             test_q_fvs[:,3] = np.multiply(test_q_fvs[:,3], q_predictions[:,2].T)
 
             # populate test
-            m = get_SGD(loss="hinge", random_state=42, n_jobs=n_jobs)
+            m = get_SGD(loss="log", random_state=42, n_jobs=n_jobs)
 
             qa_matrix = np.matrix(answers_for_train_pmids)
 
@@ -644,10 +653,12 @@ def _fit_and_make_predictions(model, annotations, X_all, X_train, train_y, X_tes
                 # TODO: There's an error here. ValueError: Shapes of X and sample_weight do not match.
                 instance_quality_d = estimate_quality_instance_level(annotations, train_pmids)
                 worker_weights = [instance_quality_d[w] for w in train_worker_ids]
-                m = get_SGD(loss="hinge", random_state=42, fit_params={"sample_weight":worker_weights}, n_jobs=n_jobs)
+                #m = get_SGD(loss="hinge", random_state=42, fit_params={"sample_weight":worker_weights}, n_jobs=n_jobs)
+                m = get_SGD(loss="log", random_state=42, fit_params={"sample_weight":worker_weights}, n_jobs=n_jobs)
                 m.fit(X_train, train_y)
             else:
-                m = get_SGD(loss="hinge", random_state=42, n_jobs=n_jobs)
+                m = get_SGD(loss="loss", random_state=42, n_jobs=n_jobs)
+                #m = get_SGD(loss="hinge", random_state=42, n_jobs=n_jobs)
                 m.fit(X_train, train_y)
             aggregate_predictions = m.predict(X_test)
         else:
@@ -655,15 +666,16 @@ def _fit_and_make_predictions(model, annotations, X_all, X_train, train_y, X_tes
     elif "grouped" in model:
         if model == "grouped":
             # grouped model; simpler case
-
             if use_worker_qualities:
                 instance_quality_d = estimate_quality_instance_level(annotations, train_pmids, use_grouped_data=use_grouped_data)#get_M_overall(annotations, train_pmids)
                 worker_weights = [instance_quality_d[w] for w in train_worker_ids]
-                m = get_SGD(loss="hinge", random_state=42, fit_params={"sample_weight":worker_weights}, n_jobs=n_jobs)
+                #m = get_SGD(loss="hinge", random_state=42, fit_params={"sample_weight":worker_weights}, n_jobs=n_jobs)
+                m = get_SGD(loss="log", random_state=42, fit_params={"sample_weight":worker_weights}, n_jobs=n_jobs)
                 #pdb.set_trace()
                 m.fit(X_train, train_y)
             else:
-                m = get_SGD(loss="hinge", random_state=42, n_jobs=n_jobs)
+                #m = get_SGD(loss="hinge", random_state=42, n_jobs=n_jobs)
+                m = get_SGD(loss="log", random_state=42, n_jobs=n_jobs)
                 m.fit(X_train, train_y)
                 
             #m.fit(X[train_indices], train_y)
@@ -706,7 +718,7 @@ BCW notes (10/22/2015)
 '''
 def rationales_exp_all_active(model="cf-stacked", use_worker_qualities=False, 
                             n_jobs=1, n_folds=5, use_grouped_data=False, 
-                            al_method="uncertainty", batch_size=20, num_init_labels=100):
+                            al_method="uncertainty", batch_size=10, num_init_labels=100):
     ##
     # basics: just load in the data + labels, vectorize
     annotations = load_appendicitis_annotations(use_grouped_data)
@@ -722,8 +734,6 @@ def rationales_exp_all_active(model="cf-stacked", use_worker_qualities=False,
     folds = KFold(len(unique_labeled_pmids), 
                     n_folds=n_folds, shuffle=True, random_state=42)
     
-    # Array for extra training instances
-    #cm = np.zeros(4)
     learning_curves = []
 
     for train_indices, test_indices in folds:

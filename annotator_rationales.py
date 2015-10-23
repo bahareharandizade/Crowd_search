@@ -456,18 +456,34 @@ def proton_beam_example(model="rationales",
     print "F (sens/spec): %s" % f  
     print "----"
 
+def _safe_divide(a, b):
+    if b == 0:
+        return "UNDEFINED"
+    return a/b
+
 def compute_measures(tp, fp, fn, tn):
     tp = float(tp)
     fp = float(fp)
     fn = float(fn)
     tn = float(tn)
-    sensitivity = tp / (tp + fn)
-    specificity = tn / (tn + fp)
-    precision   = tp / (tp + fp)
+
+
+    sensitivity = _safe_divide(tp, tp+fn)  #tp / (tp + fn)
+    specificity = _safe_divide(tn, tn+fp)  #tn / (tn + fp)
+    precision   = _safe_divide(tp, tp+fp)  #tp / (tp + fp)
     #pdb.set_trace()
     #fmeasure = 2 * (specificity * sensitivity) / (specificity + sensitivity)
+    #
     #fmeasure = 2 * (precision * sensitivity) / (precision + sensitivity)
-    f2measure = (1+2**2) * (precision * sensitivity) / ((2**2 * precision) + sensitivity)
+    f2measure = "UNDEFINED"
+    try: 
+        f2measure = ((1+2**2) * (precision * sensitivity)) / ((2**2 * precision) + sensitivity)
+    except: 
+        pass 
+    #f2measure = _safe_divide((1+2**2) * (precision * sensitivity), 
+    #                         (2**2 * precision) + sensitivity)
+    #f2measure1 = (1+2**2) * (precision * sensitivity) / ((2**2 * precision) + sensitivity)
+    #pdb.set_trace()
     return sensitivity, specificity, precision, f2measure
 
 

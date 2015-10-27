@@ -14,6 +14,7 @@ from nltk import word_tokenize
 import pandas as pd 
 
 import sklearn 
+from sklearn import metrics
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cross_validation import KFold
 from sklearn.grid_search import GridSearchCV
@@ -346,288 +347,6 @@ def cartesian(arrays, out=None):
             out[j*m:(j+1)*m,1:] = out[0:m,1:]
     return out
 
-
-def rationales_exp_cv(model="cf-stacked", use_worker_qualities=False, n_jobs=1):
-    ##
-    # basics: just load in the data + labels, vectorize
-    annotations = load_appendicitis_annotations()
-    lvl1_pmids, lvl2_pmids = read_lbls()
-
-    unique_pmids = list(set(annotations['documentId'].values))
-
-    #folds = 
-    for i, pmid in enumerate(pmids):    
-
-        if pmid in train_pmids:
-            
-            '''
-            figure out each label 
-            '''
-
-            q_decisions_for_pmid = annotations[annotations['documentId'] == pmid]
-            for worker, question_answers in q_decisions_for_pmid.groupby("workerId"):
-                # calculate the 'effective' label given by this worker,
-                # as a function of their question decisions
-
-                if model == "cf-independent-responses":
-                    q1 = question_answers[['q1']].values[0]
-                    q2 = question_answers[['q2']].values[0]
-                    q3 = question_answers[['q3']].values[0]
-                    q4 = question_answers[['q4']].values[0][0]
-                    q1a = -1 if (q1 == "No" or q1 == "\\N") else 1
-                    q4a = -1 if (q4 == "No" or q4 == "\\N") else 1
-                    q3a = -1 if (q3 == "No" or q3 == "\\N") else 1
-                    q2a = -1 if (q2 == '\\N' or (q2 != 'NoInfo' and q2 < 10)) else 1
-                    train_y.append(q1a)
-                    train_indices.append(i) # repeat the instance
-                    train_y.append(q2a)
-                    train_indices.append(i) # repeat the instance
-                    train_y.append(q3a)
-                    train_indices.append(i) # repeat the instance
-                    train_y.append(q4a)
-                    train_indices.append(i) # repeat the instance
-                else:
-                    question_answers_txt = question_answers[['q1', 'q3', 'q4']].values[0]
-                    question_answer_num = question_answers[['q2']].values[0][0]
-                    final_answer = -1 if ("No" in question_answers_txt or "\\N" in question_answers_txt or (question_answer_num == '\\N' or (question_answer_num != 'NoInfo' and question_answer_num < 10))) else 1
-                    train_y.append(final_answer)
-                    train_indices.append(i) # repeat the instance
-
-                train_worker_ids.append(worker)
-
-                q_fv = np.zeros(3)#np.zeros(3*3) # unidentifiable if we have an intercept!
-
-                #for q_index, qa in enumerate(question_answers):
-                for q_index, q_str in enumerate(["q1", "q3", "q4"]):
-                    qa = question_answers[q_str].values[0]
-                    # so would expect both to be negative
-                    # weights; errr possibly the missing
-                    # indicator could be slightly positive
-                    # as slight correction
-                    if qa == "\\N":
-                        q_fv[q_index] = .5 # unknown?
-                        #pass
-                        # q_fv[3*q_index+2] = 0#1.0 # missing indicator
-                    else:
-                        #if qa in ("No", "no"):
-                        #    q_fv[3*q_index] = 1.0
-                        if qa in ("Yes", "yes"):
-                            q_fv[q_index] = 1.0
-                #pdb.set_trace()
-                answers_for_train_pmids.append(q_fv)
-        else:    
-            test_indices.append(i)
-            # if pmid in lvl2_pmids:
-            if pmid in lvl1_pmids:
-                test_y.append(1)
-            else:
-                test_y.append(-1)
-    
-    vectorizer = TfidfVectorizer(stop_words="english", ngram_range=(1,2), min_df=3, max_features=50000)
-    
-    X_all = vectorizer.fit_transform(texts)
-
-    X_train = X_all[train_indices]
-    X_test = X_all[test_indices]
-    #pdb.set_trace()
-    test_y = np.array(test_y)
-    train_y = np.array(train_y)
-    
-    if "cf" in model:
-        if model == "cf-stacked":
-            # TODO: Fix the occasional zero division error (no true or false positives in the results?)
-            # Traceback (most recent call last):
-            # File "<stdin>", line 1, in <module>
-            # File "proton_beam.py", line 544, in rationales_exp_all_train
-            # sensitivity, specificity, f= ar.compute_measures(tp, fp, fn, tn)
-            # File "annotator_rationales.py", line 436, in compute_measures
-            # precision   = tp / (tp + fp)
-            # ZeroDivisionError: float division by zero
-            #
-            q_models = get_q_models(annotations, X_all, pmids, train_pmids,
-                                    vectorizer, model=model,
-                                    use_worker_qualities=use_worker_qualities,
-                                    use_rationales=False,
-                                    n_jobs=n_jobs)
-            q_train = np.matrix([np.array(q_m.predict_proba(X_all[train_indices]))[:,1] for q_m in q_models]).T
-            #q_train = np.matrix([np.array(q_m.decision_function(X[train_indices])) for q_m in q_models]).T
-            #m = get_svm(train_y)
-            m = get_SGD(class_weight=None, random_state=42, n_jobs=n_jobs)
-
-            print "fittting stacked model... "
-            m.fit(q_train, train_y)
-
-            # so this is a matrix 3 columns of predictions; one per question
-            # #of rows = # of test citations
-
-            q_predictions = np.matrix([np.array(q_m.predict_proba(X_all[test_indices])[:,1]) for q_m in q_models]).T
-            #q_predictions = np.matrix([np.array(q_m.decision_function(X[test_indices])) for q_m in q_models]).T
-            aggregate_predictions = m.predict(q_predictions)
-        elif model == "cf-predictions":
-            # TODO(byron.wallace@utexas.edu): Please check this code is up to date. It's from an earlier revision.
-            # TODO(byron.wallace@utexas.edu): Also maybe a better name? cf-predictions was.. lazy.. sorry ;-)
-            q_models = get_q_models(annotations, X_all, pmids, train_pmids,
-                                vectorizer, model=model,
-                                use_worker_qualities=use_worker_qualities,
-                                use_rationales=False,
-                                n_jobs=n_jobs)
-
-            q_train = np.matrix([np.array(q_m.predict_proba(X_train))[:,1] for q_m in q_models]).T
-
-            #q1_preds =  q_models[0].predict(X_test) #np.matrix([q_m.predict(X_train) for q_m in q_models]).T
-            #aggregate_predictions = q1_preds
-
-
-            params_d = {"alpha": 10.0**-np.arange(0,7)}
-            #class_weight="auto",  further boosts sensitivity...
-            q_model = SGDClassifier(class_weight="auto", loss="hinge", random_state=42, n_jobs=n_jobs)
-            m = GridSearchCV(q_model, params_d, scoring='f1', n_jobs=n_jobs)
-
-            #m = get_SGD()
-            print "fittting predictions model... "
-
-            # so this is a matrix 3 columns of predictions; one per question
-            # #of rows = # of test citations
-            q_predictions = np.matrix([np.array(q_m.predict_proba(X_test)[:,1]) for q_m in q_models]).T
-
-            aggregate_predictions = (q_predictions[:,0] >= .1) & ((q_predictions[:,1] >= .5) | (q_predictions[:,2] >= .5))
-            aggregate_predictions = np.array(map(lambda x: 1 if x else -1, aggregate_predictions ))
-
-        elif model == "cf-responses-as-features" or model == "cf-responses-as-features-wr":
-            if "wr" in model:
-                q_models = get_q_models(annotations, X_all, pmids, train_pmids,
-                                        vectorizer, model=model,
-                                        use_worker_qualities=use_worker_qualities,
-                                        use_rationales=True,
-                                        n_jobs=n_jobs)
-            else:
-                q_models = get_q_models(annotations, X_all, pmids, train_pmids,
-                                        vectorizer, model=model,
-                                        use_worker_qualities=use_worker_qualities,
-                                        use_rationales=False,
-                                        n_jobs=n_jobs)
-
-            # we train on the predicted probabilities, rather than the observed labels, 
-            # to sort of calibrate. 
-            q_train = np.matrix([np.array(q_m.predict_proba(X_train))[:,1] for q_m in q_models]).T
-
-            # bcw: introducing interaction features, too (9/29)
-            # NOTE this seems to increase sens. at the expense of
-            # a drop in spec. 
-            # might also try adding three-level interaction feature!
-            train_q_fvs = np.zeros((X_train.shape[0], 4))
-
-            train_q_fvs[:,0] = q_train[:,0].T
-            train_q_fvs[:,1] = q_train[:,1].T
-            train_q_fvs[:,2] = q_train[:,2].T
-
-            ### 9/28
-            train_q_fvs[:,3] = np.multiply(q_train[:,0], q_train[:,1]).T
-            # 3-way interaction feature
-            train_q_fvs[:,3] = np.multiply(train_q_fvs[:,3], q_train[:,2].T)
-
-            #train_q_fvs[:,4] = np.multiply(q_train[:,0], q_train[:,2]).T
-
-            print "fittting responses-as-features model... "
-            q_predictions = np.matrix([np.array(q_m.predict_proba(X_test)[:,1]) for q_m in q_models]).T
-
-
-            test_q_fvs = np.zeros((X_test.shape[0], 4)) # was 3.
-            
-            test_q_fvs[:,0] = q_predictions[:,0].T
-            test_q_fvs[:,1] = q_predictions[:,1].T
-            #test_q_fvs[:,3] = 1-q_predictions[:,1].T
-            test_q_fvs[:,2] = q_predictions[:,2].T
-            #test_q_fvs[:,6] = 1-q_predictions[:,2].T
-            #test_q_fvs[:,7] = q_predictions[:,2].T
-
-
-            # bcw: interaction features (9/28)
-            test_q_fvs[:,3] = np.multiply(q_predictions[:,0], q_predictions[:,1]).T
-       
-            test_q_fvs[:,3] = np.multiply(test_q_fvs[:,3], q_predictions[:,2].T)
-            #test_q_fvs[:,4] = np.multiply(q_predictions[:,0], q_predictions[:,2]).T
-
-            # populate test
-            m = get_SGD(loss="hinge", random_state=42, n_jobs=n_jobs)
-
-            qa_matrix = np.matrix(answers_for_train_pmids)
-            # augment X_train with question features?
-            # this is really inefficient!
-           
-            #X_train_new = np.concatenate((X_train.todense(), qa_matrix), axis=1)
-            X_train_new = np.concatenate((X_train.todense(), train_q_fvs), axis=1)
-
-            #m.fit(X_train_new, train_y)
-            m.fit(X_train_new, train_y)
-            #m.fit(X[train_indices], train_y)
-            #pdb.set_trace()
-
-            X_test_new = np.concatenate((X_test.todense(), test_q_fvs), axis=1)
-            #pdb.set_trace()
-            aggregate_predictions = m.predict(X_test_new)
-            #aggregate_predictions = m.predict(X_test)
-        elif model == "cf-independent-responses":
-            m = get_SGD(loss="hinge", random_state=42, n_jobs=n_jobs)
-            m.fit(X_train, train_y)
-            #m.fit(X[train_indices], train_y)
-            aggregate_predictions = m.predict(X_test)
-        else:
-            raise NotImplementedError('No such method exists.')
-    elif "grouped" in model:
-        if model == "grouped":
-            # grouped model; simpler case
-            if use_worker_qualities:
-                instance_quality_d = estimate_quality_instance_level(annotations, train_pmids)#get_M_overall(annotations, train_pmids)
-                worker_weights = [instance_quality_d[w] for w in train_worker_ids]
-                m = get_SGD(loss="hinge", random_state=42, fit_params={"sample_weight":worker_weights}, n_jobs=n_jobs)
-                #pdb.set_trace()
-                m.fit(X_train, train_y)
-            else:
-                m = get_SGD(loss="hinge", random_state=42, n_jobs=n_jobs)
-                m.fit(X_train, train_y)
-            #m.fit(X[train_indices], train_y)
-            aggregate_predictions = m.predict(X_test)
-        elif model == "grouped-wr":
-            # grouped *with rationales* 
-            m = get_grouped_rationales_model(
-                annotations, X_all, train_y, pmids, 
-                train_pmids, train_indices, vectorizer, 
-                use_worker_qualities=use_worker_qualities,
-                n_jobs=n_jobs)
-            
-            aggregate_predictions = m.predict(X_test)
-        else:
-            raise NotImplementedError('No such method exists.')
-    else:
-        raise NotImplementedError('No such method exists.')
-        
-
-    pdb.set_trace()
-    cm = sklearn.metrics.confusion_matrix(test_y, aggregate_predictions).flatten()
-    #
-
-    tn, fp, fn, tp = cm 
-
-    # tp, fp, fn, tn
-    #sensitivity, specificity, f = ar.compute_measures(*cm / float(n_folds))
-    sensitivity, specificity, precision, f2measure = ar.compute_measures(tp, fp, fn, tn)
-
-    print "results on test set for model: %s." % model 
-    print "using worker quality estimates? %s" % use_worker_qualities
-    print "\n----" 
-
-    print "tn, fp, fn, tp"
-    print cm
-    print "sensitivity: %s" % sensitivity
-    print "specificity: %s" % specificity
-    print "precision: %s" % precision
-    # not the traditional F; we use spec instead 
-    # of precision!
-    print "F2: %s" % f2measure 
-    print "----"
-
-
 def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, use_rationales=False,
                              use_grouped_data=False, use_decomposed_training=False, n_jobs=1, n_folds=5):
     ##
@@ -648,6 +367,7 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, use
 
     # Array for extra training instances
     cm = np.zeros(4)
+    auc = []
     for train_indices, test_indices in folds:
 
         # Split into training and testing PMIDs
@@ -720,27 +440,6 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, use
                         train_y.append(final_answer)
                         cur_train_indices.append(i)
                         train_worker_ids.append(worker)
-
-                    if not use_grouped_data:
-                        q_fv = np.zeros(3)#np.zeros(3*3) # unidentifiable if we have an intercept!
-
-                        #for q_index, qa in enumerate(question_answers):
-                        for q_index, q_str in enumerate(["q1", "q3", "q4"]):
-                            qa = question_answers[q_str].values[0]
-                            # so would expect both to be negative
-                            # weights; errr possibly the missing
-                            # indicator could be slightly positive
-                            # as slight correction
-                            if qa == "\\N":
-                                q_fv[q_index] = .5 # unknown?
-                                #pass
-                                # q_fv[3*q_index+2] = 0#1.0 # missing indicator
-                            else:
-                                #if qa in ("No", "no"):
-                                #    q_fv[3*q_index] = 1.0
-                                if qa in ("Yes", "yes"):
-                                    q_fv[q_index] = 1.0
-                        answers_for_train_pmids.append(q_fv)
             elif pmid in test_pmids:
                 lbl = 1 if pmid in lvl1_pmids else -1
                 test_y.append(lbl)
@@ -824,7 +523,7 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, use
                 m = get_SGD(loss="log", random_state=42, n_jobs=n_jobs)
                 # Training
                 X_train_new = np.concatenate((X_train.todense(), train_q_fvs), axis=1) # Add interaction features
-                print "fittting cf-stacked-if model... "
+                print "fitting cf-stacked-if model... "
                 m.fit(X_train_new, train_y)
                 # Testing
                 X_test_new = np.concatenate((X_test.todense(), test_q_fvs), axis=1) # Add interaction features
@@ -844,9 +543,11 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, use
                         instance_quality_d = estimate_quality_instance_level(annotations, train_pmids, use_grouped_data=use_grouped_data)
                         worker_weights = [instance_quality_d[w] for w in train_worker_ids]
                         m = get_SGD(loss="log", random_state=42, fit_params={"sample_weight":worker_weights}, n_jobs=n_jobs)
+                        print "fitting cf-recomposed model... "
                         m.fit(X_train, train_y)
                     else:
                         m = get_SGD(loss="log", random_state=42, n_jobs=n_jobs)
+                        print "fitting cf-recomposed model... "
                         m.fit(X_train, train_y)
 
                     aggregate_predictions = m.predict(X_test)
@@ -857,7 +558,8 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, use
 
 
         # Update statistics
-        cm += sklearn.metrics.confusion_matrix(test_y, aggregate_predictions).flatten()
+        cm += metrics.confusion_matrix(test_y, aggregate_predictions).flatten()
+        auc.append(metrics.roc_auc_score(test_y, aggregate_predictions))
 
 
     tn, fp, fn, tp = cm / float(n_folds)
@@ -874,7 +576,8 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, use
     print "sensitivity: %s" % sensitivity
     print "specificity: %s" % specificity
     print "precision: %s" % precision
-    # not the traditional F; we use spec instead 
+    print "AUC: %s" % np.mean(auc)
+    # not the traditional F; we use spec instead
     # of precision!
     print "F2: %s" % f2measure 
     print "----"
@@ -1075,8 +778,8 @@ def get_grouped_rationales_model(annotations, X, train_y, pmids, train_pmids, tr
                          worker_qualities,
                          loss="log",
                          n_jobs=n_jobs)
-    print "cv fitting!!"
     X_train = X[train_indices]
+    print "fitting cf-recomposed model... "
     model.cv_fit(X_train, train_y, alpha_vals, C_vals, C_contrast_vals, mu_vals)
 
     return model 
@@ -1088,7 +791,6 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer,
     q_models = []
     
     # Note we skip question 2 because it's numeric
-    # TODO: Generalize this, so we have a list of numeric questions to ignore
     for question_num in [1,3,4]:
         # get worker quality estimates, which we'll use to 
         # scale the rationales
@@ -1146,7 +848,6 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer,
         q_X_train = X_train[q_X_train_indices]
 
         if(use_rationales):
-            # TODO(byron.wallace@utexas.edu): Consider moving, or at least extending, this block
             # Specifically we have several methods which call this method, but they don't necessarily all want the
             # rationales to be incorporated on a per question basis.
 
@@ -1199,7 +900,7 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer,
                                  worker_qualities,
                                  loss="log",
                                  n_jobs=n_jobs)
-            print "cv fitting!!"
+
             q_model.cv_fit(q_X_train, q_lbls, alpha_vals, C_vals, C_contrast_vals, mu_vals)
             q_models.append(q_model)
             #q_model = ar.ARModel(X_pos_rationales, X_neg_rationales, loss="log")
@@ -1209,13 +910,13 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer,
             q_model = SGDClassifier(class_weight=None, loss="log", random_state=42, n_jobs=n_jobs)
 
             import random
-            weights = None 
             if use_worker_qualities:
                 weights = [worker_qualities[w_id] for w_id in worker_ids]
-
-
-            clf = GridSearchCV(q_model, params_d, scoring='f1', 
+                clf = GridSearchCV(q_model, params_d, scoring='f1',
                                 fit_params={'sample_weight':weights}, n_jobs=n_jobs)
+            else:
+                clf = GridSearchCV(q_model, params_d, scoring='f1', fit_params=None, n_jobs=n_jobs)
+
             
             clf.fit(q_X_train, q_lbls)#sample_weight=weights)
             #best_clf = clf.estimator 

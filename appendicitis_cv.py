@@ -686,10 +686,20 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False,
                         q4a = -1 if (q4 == "No" or q4 == "\\N") else 1
                         q3a = -1 if (q3 == "No" or q3 == "\\N") else 1
                         q2a = -1 if (q2 == '\\N' or (q2 != 'NoInfo' and q2 < 10)) else 1
+
+                        # Extra interaction feature in the form of the final answer
+                        question_answers_txt = question_answers[['q1', 'q3', 'q4']].values[0]
+                        question_answer_num = question_answers[['q2']].values[0][0]
+                        final_answer = -1 if ("No" in question_answers_txt or "\\N" in question_answers_txt or
+                                              (question_answer_num == '\\N' or
+                                               (question_answer_num != 'NoInfo' and question_answer_num < 10)))\
+                                          else 1
+
                         train_y.append(q1a)
                         train_y.append(q2a)
                         train_y.append(q3a)
                         train_y.append(q4a)
+                        train_y.append(final_answer)
 
                         '''
                         if skipFirst:
@@ -705,7 +715,9 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False,
                         cur_train_indices.append(i) # repeat 
                         cur_train_indices.append(i) # repeat...
                         cur_train_indices.append(i) # repeat.
+                        cur_train_indices.append(i) # repeat.
 
+                        train_worker_ids.append(worker)
                         train_worker_ids.append(worker)
                         train_worker_ids.append(worker)
                         train_worker_ids.append(worker)
@@ -774,105 +786,26 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False,
                 raise NotImplementedError("No CF methods are compatible with grouped data.")
             
             if model == "cf-stacked":
-                q_models = get_q_models(annotations, X_all, pmids, train_pmids,
-                                        vectorizer, model=model,
-                                        use_worker_qualities=use_worker_qualities,
-                                        use_rationales=False,
-                                        n_jobs=n_jobs)
+                if "wr" in model:
+                    q_models = get_q_models(annotations, X_all, pmids, train_pmids,
+                                            vectorizer, model=model,
+                                            use_worker_qualities=use_worker_qualities,
+                                            use_rationales=True,
+                                            n_jobs=n_jobs)
+                else:
+                    q_models = get_q_models(annotations, X_all, pmids, train_pmids,
+                                            vectorizer, model=model,
+                                            use_worker_qualities=use_worker_qualities,
+                                            use_rationales=False,
+                                            n_jobs=n_jobs)
                 q_train = np.matrix([np.array(q_m.predict_proba(X_train))[:,1] for q_m in q_models]).T
-                m = get_SGD(random_state=42, n_jobs=n_jobs)
+                m = get_SGD(loss="log", random_state=42, n_jobs=n_jobs)
 
                 print "fittting stacked model... "
                 m.fit(q_train, train_y)
 
                 q_predictions = np.matrix([np.array(q_m.predict_proba(X_test)[:,1]) for q_m in q_models]).T
                 aggregate_predictions = m.predict(q_predictions)
-            elif model == "cf-predictions":
-                # TODO(byron.wallace@utexas.edu): Please check this code is up to date. It's from an earlier revision.
-                # TODO(byron.wallace@utexas.edu): Also maybe a better name? cf-predictions was.. lazy.. sorry ;-)
-                q_models = get_q_models(annotations, X_all, pmids, train_pmids,
-                                    vectorizer, model=model,
-                                    use_worker_qualities=use_worker_qualities,
-                                    use_rationales=False,
-                                    n_jobs=n_jobs)
-
-                q_train = np.matrix([np.array(q_m.predict_proba(X_train))[:,1] for q_m in q_models]).T
-
-                #q1_preds =  q_models[0].predict(X_test) #np.matrix([q_m.predict(X_train) for q_m in q_models]).T
-                #aggregate_predictions = q1_preds
-
-
-                params_d = {"alpha": 10.0**-np.arange(0,7)}
-                #class_weight="auto",  further boosts sensitivity...
-                q_model = SGDClassifier(class_weight="auto", loss="hinge", random_state=42, n_jobs=n_jobs)
-                m = GridSearchCV(q_model, params_d, scoring='f1', n_jobs=n_jobs)
-
-                #m = get_SGD()
-                print "fittting predictions model... "
-                #pdb.set_trace()
-
-                # do not use expert labels in training!!! FOR EITHER
-                # MODEL
-                '''
-                And now for extremely naive/slow model fitting!
-                '''
-                '''
-                lambda_ = 1
-                alpha_vals = np.linspace(.2,.8,25)
-                beta_vals = np.linspace(.2,.8,25)
-                gamma_vals = np.linspace(.1,.8,25)
-                a_star, b_star, g_star = None, None, None
-                best_score, best_sens, best_spec = -np.inf, -np.inf, -np.inf
-                for a, b, g in cartesian([alpha_vals, beta_vals, gamma_vals]):
-                    #preds = ((q_train[:,0] > a) & ((q_train[:,1] > b) | (q_train[:,2] > g)))
-                    preds = ((q_train[:,0] > a) & (q_train[:,1] > b) & (q_train[:,2] > g))
-                    #preds = q_train[:,0] > a
-                    preds = np.array(map(lambda x: 1 if x else -1, preds))
-                    sens = sklearn.metrics.accuracy_score(train_y[train_y>0], preds[train_y>0])
-                    spec = sklearn.metrics.accuracy_score(train_y[train_y<=0], preds[train_y<=0])
-
-                    cur_score = lambda_ * sens + spec
-
-                    if cur_score > best_score:
-                        a_star, b_star, g_star = a, b, g
-                        best_score = cur_score
-                        best_sens = sens
-                        best_spec = spec
-
-                '''
-
-                #pdb.set_trace()
-
-                # so this is a matrix 3 columns of predictions; one per question
-                # #of rows = # of test citations
-                q_predictions = np.matrix([np.array(q_m.predict_proba(X_test)[:,1]) for q_m in q_models]).T
-                #pdb.set_trace()
-                #q_predictions = np.matrix([np.array(q_m.predict(X_test)) for q_m in q_models]).T
-
-                # stacking aggregation
-                #m.fit(q_train, train_y)
-                #aggregate_predictions = m.predict(q_predictions)
-
-                #q_predictions = np.matrix([np.array(q_m.decision_function(X[test_indices])) for q_m in q_models]).T
-
-                # this is the OR approach for q's 2&3
-                #aggregate_predictions = ((q_predictions[:,0] > a_star) & ((q_predictions[:,1] > b_star) | (q_predictions[:,2] > g_star)))
-
-                # standard AND aggregation
-                #aggregate_predictions = ((q_predictions[:,0] > a_star) & (q_predictions[:,1] > b_star) & (q_predictions[:,2] > g_star))
-                #aggregate_predictions = np.array(map(lambda x: 1 if x else -1, aggregate_predictions ))
-                #aggregate_predictions = ((q_predictions[:,0] >= .5) & (
-                #                            q_predictions[:,1] >= .5) & (q_predictions[:,2] >= .5))
-                #aggregate_predictions = ((q_predictions[:,0] > 0) &
-                #                           (q_predictions[:,1] > 0) & (q_predictions[:,2] >= 0))
-
-                #aggregate_predictions = (q_predictions[:,0] + q_predictions[:,1] + q_predictions[:,2]) >= 3
-                #pdb.set_trace()
-                aggregate_predictions = (q_predictions[:,0] >= .1) & ((q_predictions[:,1] >= .5) | (q_predictions[:,2] >= .5))
-                aggregate_predictions = np.array(map(lambda x: 1 if x else -1, aggregate_predictions ))
-
-                #
-                #pdb.set_trace()
             elif model == "cf-responses-as-features" or model == "cf-responses-as-features-wr":
                 if "wr" in model:
                     q_models = get_q_models(annotations, X_all, pmids, train_pmids,
@@ -961,7 +894,7 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False,
                         fv[q_index*3+1] = 1.0
                 '''
 
-                m = get_SGD(loss="hinge", random_state=42, n_jobs=n_jobs)
+                m = get_SGD(loss="log", random_state=42, n_jobs=n_jobs)
 
                 qa_matrix = np.matrix(answers_for_train_pmids)
                 # augment X_train with question features?
@@ -981,13 +914,12 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False,
                 #aggregate_predictions = m.predict(X_test)
             elif model == "cf-independent-responses":
                 if use_worker_qualities:
-                    # TODO: There's an error here. ValueError: Shapes of X and sample_weight do not match.
                     instance_quality_d = estimate_quality_instance_level(annotations, train_pmids)
                     worker_weights = [instance_quality_d[w] for w in train_worker_ids]
-                    m = get_SGD(loss="hinge", random_state=42, fit_params={"sample_weight":worker_weights}, n_jobs=n_jobs)
+                    m = get_SGD(loss="log", random_state=42, fit_params={"sample_weight":worker_weights}, n_jobs=n_jobs)
                     m.fit(X_train, train_y)
                 else:
-                    m = get_SGD(loss="hinge", random_state=42, n_jobs=n_jobs)
+                    m = get_SGD(loss="log", random_state=42, n_jobs=n_jobs)
                     m.fit(X_train, train_y)
                 aggregate_predictions = m.predict(X_test)
             else:
@@ -999,11 +931,11 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False,
                 if use_worker_qualities:
                     instance_quality_d = estimate_quality_instance_level(annotations, train_pmids, use_grouped_data=use_grouped_data)#get_M_overall(annotations, train_pmids)
                     worker_weights = [instance_quality_d[w] for w in train_worker_ids]
-                    m = get_SGD(loss="hinge", random_state=42, fit_params={"sample_weight":worker_weights}, n_jobs=n_jobs)
+                    m = get_SGD(loss="log", random_state=42, fit_params={"sample_weight":worker_weights}, n_jobs=n_jobs)
                     #pdb.set_trace()
                     m.fit(X_train, train_y)
                 else:
-                    m = get_SGD(loss="hinge", random_state=42, n_jobs=n_jobs)
+                    m = get_SGD(loss="log", random_state=42, n_jobs=n_jobs)
                     m.fit(X_train, train_y)
                     
                 #m.fit(X[train_indices], train_y)

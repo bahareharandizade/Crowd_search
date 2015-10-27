@@ -378,16 +378,30 @@ def get_train_and_test_X_y(annotations, X_all, pmids, train_pmids, test_pmids,
                     q4a = -1 if (q4 == "No" or q4 == "\\N") else 1
                     q3a = -1 if (q3 == "No" or q3 == "\\N") else 1
                     q2a = -1 if (q2 == '\\N' or (q2 != 'NoInfo' and q2 < 10)) else 1
+
+                    # Extra interaction feature in the form of the final answer
+                    question_answers_txt = question_answers[['q1', 'q3', 'q4']].values[0]
+                    question_answer_num = question_answers[['q2']].values[0][0]
+                    final_answer = -1 if ("No" in question_answers_txt or "\\N" in question_answers_txt or
+                                          (question_answer_num == '\\N' or
+                                           (question_answer_num != 'NoInfo' and question_answer_num < 10)))\
+                                      else 1
+
+
                     train_y.append(q1a)
                     train_y.append(q2a)
                     train_y.append(q3a)
                     train_y.append(q4a)
+                    train_y.append(final_answer)
 
                     cur_train_indices.append(i) # repeat
                     cur_train_indices.append(i) # repeat 
                     cur_train_indices.append(i) # repeat...
                     cur_train_indices.append(i) # repeat.
+                    cur_train_indices.append(i) # repeat.
 
+
+                    train_worker_ids.append(worker)
                     train_worker_ids.append(worker)
                     train_worker_ids.append(worker)
                     train_worker_ids.append(worker)
@@ -518,7 +532,7 @@ def run_AL(model, al_method, batch_size, num_init_labels,
         # the pool using the al_method!
         # add the selected indices to the cur_train_indices
         #
-        if model in ("cf-stacked", "cf-responses-as-features", "cf-responses-as-features-wr"):
+        if model in ("cf-stacked", "cf-stacked-wr", "cf-responses-as-features", "cf-responses-as-features-wr"):
             # in these cases, we also need the question models, so unpack 
             # these from the returned values.
             q_models, trained_model = trained_model

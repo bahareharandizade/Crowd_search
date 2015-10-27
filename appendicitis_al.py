@@ -473,7 +473,7 @@ def run_AL(model, al_method, batch_size, num_init_labels,
     '''
 
     n_lbls_so_far = 0 
-    total_num_lbls_to_acquire = X_train.shape[0]
+    total_num_lbls_to_acquire = X_train.shape[0]/10.0
 
     # maintain the learning curve -- right now,
     # the complete confusion matrix at each step

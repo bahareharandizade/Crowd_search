@@ -628,8 +628,8 @@ def rationales_exp_cv(model="cf-stacked", use_worker_qualities=False, n_jobs=1):
     print "----"
 
 
-def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, 
-                            n_jobs=1, n_folds=5, use_grouped_data=False):
+def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, use_rationales=False,
+                             use_grouped_data=False, use_decomposed_training=False, n_jobs=1, n_folds=5):
     ##
     # basics: just load in the data + labels, vectorize
     annotations = load_appendicitis_annotations(use_grouped_data)
@@ -649,14 +649,13 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False,
     # Array for extra training instances
     cm = np.zeros(4)
     for train_indices, test_indices in folds:
-        #pdb.set_trace()
+
         # Split into training and testing PMIDs
         train_pmids = np.array(unique_labeled_pmids)[train_indices].tolist()
         test_pmids  = np.array(unique_labeled_pmids)[test_indices].tolist()
 
         cur_train_indices, cur_test_indices = [], []
 
-        #pdb.set_trace()
 
         train_y, test_y = [], []
         answers_for_train_pmids = []
@@ -675,9 +674,9 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False,
                     # calculate the 'effective' label given by this worker,
                     # as a function of their question decisions
 
-                    if model == "cf-independent-responses":
+                    if use_decomposed_training:
                         if use_grouped_data:
-                            raise NotImplementedError("No CF methods are compatible with grouped data.")
+                            raise NotImplementedError("Grouped data is not compatible with decomposed training")
                         q1 = question_answers[['q1']].values[0]
                         q2 = question_answers[['q2']].values[0]
                         q3 = question_answers[['q3']].values[0]
@@ -695,35 +694,19 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False,
                                                (question_answer_num != 'NoInfo' and question_answer_num < 10)))\
                                           else 1
 
+                        # Add answers and final answer interaction feature to training data.
                         train_y.append(q1a)
                         train_y.append(q2a)
                         train_y.append(q3a)
                         train_y.append(q4a)
                         train_y.append(final_answer)
 
-                        '''
-                        if skipFirst:
-                            skipFirst = False
-                        else:
-                            train_indices = np.append(train_indices,i) # repeat the instance
+                        for _ in range(5):
+                            cur_train_indices.append(i)
 
-                        train_indices = np.append(train_indices,i) # repeat the instance
-                        train_indices = np.append(train_indices,i) # repeat the instance
-                        train_indices = np.append(train_indices,i) # repeat the instance
-                        '''
-                        cur_train_indices.append(i) # repeat
-                        cur_train_indices.append(i) # repeat 
-                        cur_train_indices.append(i) # repeat...
-                        cur_train_indices.append(i) # repeat.
-                        cur_train_indices.append(i) # repeat.
-
-                        train_worker_ids.append(worker)
-                        train_worker_ids.append(worker)
-                        train_worker_ids.append(worker)
-                        train_worker_ids.append(worker)
-                        train_worker_ids.append(worker)
+                        for _ in range(5):
+                            train_worker_ids.append(worker)
                     else:
-                        final_answer = None
                         if use_grouped_data:
                             question_answer = question_answers[['q1']].values[0]
                             final_answer = -1 if ("No" in question_answer) else 1
@@ -734,16 +717,7 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False,
                                                   (question_answer_num == '\\N' or
                                                    (question_answer_num != 'NoInfo' and question_answer_num < 10)))\
                                               else 1
-
                         train_y.append(final_answer)
-
-                        '''
-                        #pdb.set_trace()
-                        if skipFirst:
-                            skipFirst = False
-                        else:
-                            train_indices = np.append(train_indices,i) # repeat the instance
-                        '''
                         cur_train_indices.append(i)
                         train_worker_ids.append(worker)
 
@@ -766,7 +740,6 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False,
                                 #    q_fv[3*q_index] = 1.0
                                 if qa in ("Yes", "yes"):
                                     q_fv[q_index] = 1.0
-                        #pdb.set_trace()
                         answers_for_train_pmids.append(q_fv)
             elif pmid in test_pmids:
                 lbl = 1 if pmid in lvl1_pmids else -1
@@ -776,17 +749,15 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False,
 
         X_train = X_all[cur_train_indices]
         X_test = X_all[cur_test_indices]
-        #pdb.set_trace()
         test_y = np.array(test_y)
         train_y = np.array(train_y)
         
 
         if "cf" in model:
-            if use_grouped_data:
-                raise NotImplementedError("No CF methods are compatible with grouped data.")
-            
             if model == "cf-stacked":
-                if "wr" in model:
+                if use_grouped_data:
+                    raise NotImplementedError("This CF method is not compatible with grouped data.")
+                if use_rationales:
                     q_models = get_q_models(annotations, X_all, pmids, train_pmids,
                                             vectorizer, model=model,
                                             use_worker_qualities=use_worker_qualities,
@@ -798,16 +769,22 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False,
                                             use_worker_qualities=use_worker_qualities,
                                             use_rationales=False,
                                             n_jobs=n_jobs)
-                q_train = np.matrix([np.array(q_m.predict_proba(X_train))[:,1] for q_m in q_models]).T
+
+                ##### STACKING #####
                 m = get_SGD(loss="log", random_state=42, n_jobs=n_jobs)
 
-                print "fittting stacked model... "
+                # Training
+                q_train = np.matrix([np.array(q_m.predict_proba(X_train))[:,1] for q_m in q_models]).T
+                print "fitting cf-stacked model... "
                 m.fit(q_train, train_y)
 
+                # Testing
                 q_predictions = np.matrix([np.array(q_m.predict_proba(X_test)[:,1]) for q_m in q_models]).T
                 aggregate_predictions = m.predict(q_predictions)
-            elif model == "cf-responses-as-features" or model == "cf-responses-as-features-wr":
-                if "wr" in model:
+            elif model == "cf-stacked-if":
+                if use_grouped_data:
+                    raise NotImplementedError("This CF method is not compatible with grouped data.")
+                if use_rationales:
                     q_models = get_q_models(annotations, X_all, pmids, train_pmids,
                                             vectorizer, model=model,
                                             use_worker_qualities=use_worker_qualities,
@@ -820,136 +797,59 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False,
                                             use_rationales=False,
                                             n_jobs=n_jobs)
 
-                # we train on the predicted probabilities, rather than the observed labels,
-                # to sort of calibrate.
-                q_train = np.matrix(
-                    [np.array(q_m.predict_proba(X_train))[:,1] for q_m in q_models]).T
+                q_train = np.matrix([np.array(q_m.predict_proba(X_train))[:,1] for q_m in q_models]).T
 
-                # bcw: introducing interaction features, too (9/29)
-                # NOTE this seems to increase sens. at the expense of
-                # a drop in spec.
-                # might also try adding three-level interaction feature!
+                ##### INTERACTION FEATURE (TRAINING) #####
                 train_q_fvs = np.zeros((X_train.shape[0], 4))
-
                 train_q_fvs[:,0] = q_train[:,0].T
                 train_q_fvs[:,1] = q_train[:,1].T
                 train_q_fvs[:,2] = q_train[:,2].T
-
-                ### 9/28
+                # 3-way interaction feature, i.e. q1,q3 and q4 predictions multiplied.
                 train_q_fvs[:,3] = np.multiply(q_train[:,0], q_train[:,1]).T
-                # 3-way interaction feature
                 train_q_fvs[:,3] = np.multiply(train_q_fvs[:,3], q_train[:,2].T)
 
-                #train_q_fvs[:,4] = np.multiply(q_train[:,0], q_train[:,2]).T
-
-                # also introduce
-
-                print "fittting responses-as-features model... "
-
-
-                #pdb.set_trace()
-
-                # so this is a matrix 3 columns of predictions; one per question
-                # #of rows = # of test citations
                 q_predictions = np.matrix([np.array(q_m.predict_proba(X_test)[:,1]) for q_m in q_models]).T
-                #pdb.set_trace()
-                #pdb.set_trace()
-                #q_predictions = np.matrix([np.array(q_m.predict_proba(X_test)) for q_m in q_models]).T
 
-                # stacking aggregation
-                #m.fit(q_train, train_y)
-                #aggregate_predictions = m.predict(q_predictions)
-
-
-
-                test_q_fvs = np.zeros((X_test.shape[0], 4)) # was 3.
-                #pdb.set_trace()
+                ##### INTERACTION FEATURE (TESTING) #####
+                test_q_fvs = np.zeros((X_test.shape[0], 4))
                 test_q_fvs[:,0] = q_predictions[:,0].T
                 test_q_fvs[:,1] = q_predictions[:,1].T
-                #test_q_fvs[:,3] = 1-q_predictions[:,1].T
                 test_q_fvs[:,2] = q_predictions[:,2].T
-                #test_q_fvs[:,6] = 1-q_predictions[:,2].T
-                #test_q_fvs[:,7] = q_predictions[:,2].T
-
-
-                # bcw: interaction features (9/28)
+                # 3-way interaction feature, i.e. q1,q3 and q4 predictions multiplied.
                 test_q_fvs[:,3] = np.multiply(q_predictions[:,0], q_predictions[:,1]).T
-                #pdb.set_trace()
                 test_q_fvs[:,3] = np.multiply(test_q_fvs[:,3], q_predictions[:,2].T)
-                #test_q_fvs[:,4] = np.multiply(q_predictions[:,0], q_predictions[:,2]).T
 
-                # populate test
 
-                '''
-                for q_index, qa in enumerate(question_answers):
-                    # so would expect both to be negative
-                    # weights; errr possibly the missing
-                    # indicator could be slightly positive
-                    # as slight correction
-                    if qa == "\\N":
-                        fv[q_index*3+2] = 1.0 # missing indicator
-                    elif qa in ("No", "no"):
-                        fv[q_index*3] = 1.0
-                    else:
-                        fv[q_index*3+1] = 1.0
-                '''
-
+                ##### STACKING #####
                 m = get_SGD(loss="log", random_state=42, n_jobs=n_jobs)
-
-                qa_matrix = np.matrix(answers_for_train_pmids)
-                # augment X_train with question features?
-                # this is really inefficient!
-
-                #X_train_new = np.concatenate((X_train.todense(), qa_matrix), axis=1)
-                X_train_new = np.concatenate((X_train.todense(), train_q_fvs), axis=1)
-
-                #m.fit(X_train_new, train_y)
+                # Training
+                X_train_new = np.concatenate((X_train.todense(), train_q_fvs), axis=1) # Add interaction features
+                print "fittting cf-stacked-if model... "
                 m.fit(X_train_new, train_y)
-                #m.fit(X[train_indices], train_y)
-                #pdb.set_trace()
-
-                X_test_new = np.concatenate((X_test.todense(), test_q_fvs), axis=1)
-                #pdb.set_trace()
+                # Testing
+                X_test_new = np.concatenate((X_test.todense(), test_q_fvs), axis=1) # Add interaction features
                 aggregate_predictions = m.predict(X_test_new)
-                #aggregate_predictions = m.predict(X_test)
-            elif model == "cf-independent-responses":
-                if use_worker_qualities:
-                    instance_quality_d = estimate_quality_instance_level(annotations, train_pmids)
-                    worker_weights = [instance_quality_d[w] for w in train_worker_ids]
-                    m = get_SGD(loss="log", random_state=42, fit_params={"sample_weight":worker_weights}, n_jobs=n_jobs)
-                    m.fit(X_train, train_y)
-                else:
-                    m = get_SGD(loss="log", random_state=42, n_jobs=n_jobs)
-                    m.fit(X_train, train_y)
-                aggregate_predictions = m.predict(X_test)
-            else:
-                raise NotImplementedError('No such method exists.')
-        elif "grouped" in model:
-            if model == "grouped":
-                # grouped model; simpler case
-
-                if use_worker_qualities:
-                    instance_quality_d = estimate_quality_instance_level(annotations, train_pmids, use_grouped_data=use_grouped_data)#get_M_overall(annotations, train_pmids)
-                    worker_weights = [instance_quality_d[w] for w in train_worker_ids]
-                    m = get_SGD(loss="log", random_state=42, fit_params={"sample_weight":worker_weights}, n_jobs=n_jobs)
-                    #pdb.set_trace()
-                    m.fit(X_train, train_y)
-                else:
-                    m = get_SGD(loss="log", random_state=42, n_jobs=n_jobs)
-                    m.fit(X_train, train_y)
-                    
-                #m.fit(X[train_indices], train_y)
-                aggregate_predictions = m.predict(X_test)
-            elif model == "grouped-wr":
-                # grouped *with rationales*
-                m = get_grouped_rationales_model(
+            elif model == "cf-recomposed":
+                if use_rationales:
+                    m = get_grouped_rationales_model(
                     annotations, X_all, train_y, pmids,
                     train_pmids, train_indices, vectorizer,
                     use_worker_qualities=use_worker_qualities,
                     use_grouped_data=use_grouped_data,
                     n_jobs=n_jobs)
 
-                aggregate_predictions = m.predict(X_test)
+                    aggregate_predictions = m.predict(X_test)
+                else:
+                    if use_worker_qualities:
+                        instance_quality_d = estimate_quality_instance_level(annotations, train_pmids, use_grouped_data=use_grouped_data)
+                        worker_weights = [instance_quality_d[w] for w in train_worker_ids]
+                        m = get_SGD(loss="log", random_state=42, fit_params={"sample_weight":worker_weights}, n_jobs=n_jobs)
+                        m.fit(X_train, train_y)
+                    else:
+                        m = get_SGD(loss="log", random_state=42, n_jobs=n_jobs)
+                        m.fit(X_train, train_y)
+
+                    aggregate_predictions = m.predict(X_test)
             else:
                 raise NotImplementedError('No such method exists.')
         else:
@@ -957,7 +857,6 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False,
 
 
         # Update statistics
-        #pdb.set_trace()
         cm += sklearn.metrics.confusion_matrix(test_y, aggregate_predictions).flatten()
 
 

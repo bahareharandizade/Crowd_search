@@ -454,7 +454,7 @@ def run_AL(model, al_method, batch_size, num_init_labels,
         #pdb.set_trace()
         # once everything is labele, train the model and make predictions
         aggregate_predictions, trained_model = _fit_and_make_predictions(
-                    model, annotations, X_all, X_train[cur_train_indices], 
+                    model, annotations, X_all, cur_train_indices, X_train[cur_train_indices],
                     train_y[cur_train_indices], 
                     X_test, pmids, train_pmids, vectorizer, train_worker_ids,
                     use_grouped_data=use_grouped_data, use_worker_qualities=use_worker_qualities,
@@ -533,7 +533,7 @@ def run_AL(model, al_method, batch_size, num_init_labels,
     return learning_curve
 
 
-def _fit_and_make_predictions(model, annotations, X_all, X_train, train_y, X_test, pmids, 
+def _fit_and_make_predictions(model, annotations, X_all, cur_train_indices, X_train, train_y, X_test, pmids,
                                 train_pmids, vectorizer, train_worker_ids, use_grouped_data=False,
                                 use_worker_qualities=False, use_rationales=False,
                                 n_jobs=1, return_model=False):
@@ -643,8 +643,8 @@ def _fit_and_make_predictions(model, annotations, X_all, X_train, train_y, X_tes
         elif model == "cf-recomposed":
             if use_rationales:
                 m = get_grouped_rationales_model(
-                annotations, X_all, train_y, pmids,
-                train_pmids, cur_train_indices, vectorizer,
+                annotations, X_train, train_y, pmids,
+                train_pmids, vectorizer,
                 use_worker_qualities=use_worker_qualities,
                 use_grouped_data=use_grouped_data,
                 n_jobs=n_jobs)
@@ -747,7 +747,7 @@ def get_unique(rationales_d, worker_qualities):
     return unique_ids, unique_rationales
 
 
-def get_grouped_rationales_model(annotations, X, train_y, pmids, train_pmids, train_indices, vectorizer, use_worker_qualities=True, use_grouped_data=False, n_jobs=1):
+def get_grouped_rationales_model(annotations, X_train, train_y, pmids, train_pmids, vectorizer, use_worker_qualities=True, use_grouped_data=False, n_jobs=1):
     pos_rationales_d, neg_rationales_d = defaultdict(list), defaultdict(list)
     overall_worker_quality_d = defaultdict(list)
 
@@ -819,7 +819,7 @@ def get_grouped_rationales_model(annotations, X, train_y, pmids, train_pmids, tr
                          loss="log",
                          n_jobs=n_jobs)
     print "fitting cf-recomposed model... "
-    X_train = X[train_indices]
+    #X_train = X[train_indices]
     model.cv_fit(X_train, train_y, alpha_vals, C_vals, C_contrast_vals, mu_vals)
 
     return model 

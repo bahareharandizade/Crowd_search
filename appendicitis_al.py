@@ -6,7 +6,9 @@ import string
 import math 
 import random
 from collections import defaultdict 
-import re 
+import re
+import cPickle
+import os.path
 
 import numpy as np 
 
@@ -410,7 +412,8 @@ def _pretty_print_d(d):
 def run_AL(model, al_method, batch_size, num_init_labels,
             annotations, X_all, X_train, train_y, X_test, test_y,
             pmids, train_pmids, vectorizer, train_worker_ids, use_grouped_data=False,
-            use_worker_qualities=False, use_rationales=False, n_jobs=1):
+            use_worker_qualities=False, use_rationales=False,
+            n_jobs=1, init_set_path=None):
     '''
     Run active learning given a model, al_method and train/test 
     set. 
@@ -433,8 +436,17 @@ def run_AL(model, al_method, batch_size, num_init_labels,
     # probably start by randomly selecting a few instances
     # to have labeled -- may consider explicitly 
     # starting wtih a balanced sample!
-    
-    cur_train_indices = np.random.choice(X_train.shape[0], num_init_labels, replace=False).tolist()
+
+    if init_set_path is None:
+        cur_train_indices = np.random.choice(X_train.shape[0], num_init_labels, replace=False).tolist()
+    else:
+        if os.path.isfile(init_set_path):
+            cur_train_indices = cPickle.load(open(init_set_path, 'rb'))
+            pass
+        else:
+            cur_train_indices = np.random.choice(X_train.shape[0], num_init_labels, replace=False).tolist()
+            cPickle.dump(cur_train_indices, open(init_set_path, 'wb'))
+            pass
     n_lbls = num_init_labels
 
     while n_lbls < total_num_lbls_to_acquire:
@@ -443,9 +455,9 @@ def run_AL(model, al_method, batch_size, num_init_labels,
         aggregate_predictions, trained_model = _fit_and_make_predictions(
                     model, annotations, X_all, X_train[cur_train_indices], 
                     train_y[cur_train_indices], 
-                    X_test, pmids, train_pmids, vectorizer, 
-                    use_grouped_data, use_worker_qualities, use_rationales, train_worker_ids, n_jobs=n_jobs,
-                    return_model=True)
+                    X_test, pmids, train_pmids, vectorizer, train_worker_ids,
+                    use_grouped_data=use_grouped_data, use_worker_qualities=use_worker_qualities,
+                    use_rationales=use_rationales, n_jobs=n_jobs, return_model=True)
 
         # how are we doing so far? 
         # for future ref, we record the num lbls so 
@@ -526,13 +538,13 @@ def _fit_and_make_predictions(model, annotations, X_all, X_train, train_y, X_tes
             if use_grouped_data:
                     raise NotImplementedError("This CF method is not compatible with grouped data.")
             if use_rationales:
-                q_models = get_q_models(annotations, X_all, pmids, train_pmids,
+                q_models = _get_q_models(annotations, X_all, pmids, train_pmids,
                                         vectorizer, model=model,
                                         use_worker_qualities=use_worker_qualities,
                                         use_rationales=True,
                                         n_jobs=n_jobs)
             else:
-                q_models = get_q_models(annotations, X_all, pmids, train_pmids,
+                q_models = _get_q_models(annotations, X_all, pmids, train_pmids,
                                         vectorizer, model=model,
                                         use_worker_qualities=use_worker_qualities,
                                         use_rationales=False,
@@ -553,13 +565,13 @@ def _fit_and_make_predictions(model, annotations, X_all, X_train, train_y, X_tes
             if use_grouped_data:
                 raise NotImplementedError("This CF method is not compatible with grouped data.")
             if use_rationales:
-                q_models = get_q_models(annotations, X_all, pmids, train_pmids,
+                q_models = _get_q_models(annotations, X_all, pmids, train_pmids,
                                         vectorizer, model=model,
                                         use_worker_qualities=use_worker_qualities,
                                         use_rationales=True,
                                         n_jobs=n_jobs)
             else:
-                q_models = get_q_models(annotations, X_all, pmids, train_pmids,
+                q_models = _get_q_models(annotations, X_all, pmids, train_pmids,
                                         vectorizer, model=model,
                                         use_worker_qualities=use_worker_qualities,
                                         use_rationales=False,
@@ -649,7 +661,8 @@ BCW notes (10/22/2015)
 def rationales_exp_all_active(model="cf-stacked", use_worker_qualities=False, 
                             n_jobs=1, n_folds=5, use_grouped_data=False,
                             use_decomposed_training=False, use_rationales=False,
-                            al_method="uncertainty", batch_size=10, num_init_labels=100):
+                            al_method="uncertainty", batch_size=10, num_init_labels=100,
+                            init_set_path=None):
     ##
     # basics: just load in the data + labels, vectorize
     annotations = load_appendicitis_annotations(use_grouped_data)
@@ -675,14 +688,15 @@ def rationales_exp_all_active(model="cf-stacked", use_worker_qualities=False,
 
         X_train, train_y, X_test, test_y, train_worker_ids = get_train_and_test_X_y(
                 annotations, X_all, pmids, train_pmids, test_pmids, 
-                model, lvl1_pmids, lvl2_pmids, use_grouped_data)
+                model, lvl1_pmids, lvl2_pmids, use_grouped_data=use_grouped_data,
+                use_decomposed_training=use_decomposed_training)
 
         # now run active learning experiment over train/test split
         cur_learning_curve = run_AL(model, al_method, batch_size, num_init_labels,
             annotations, X_all, X_train, train_y, X_test, test_y, pmids, 
             train_pmids, vectorizer, train_worker_ids, use_grouped_data=use_grouped_data,
             use_worker_qualities=use_worker_qualities, use_rationales=use_rationales,
-            use_decomposed_training=use_decomposed_training, n_jobs=n_jobs)
+            n_jobs=n_jobs, init_set_path=init_set_path)
 
         learning_curves.append(cur_learning_curve)
 

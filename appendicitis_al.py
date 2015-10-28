@@ -572,12 +572,26 @@ def _fit_and_make_predictions(model, annotations, X_all, X_train, train_y, X_tes
 
             # Training
             q_train = np.matrix([np.array(q_m.predict_proba(X_train))[:,1] for q_m in q_models]).T
+
+            ##### INTERACTION FEATURE (TRAINING) #####
+            train_q_fvs = np.zeros((X_train.shape[0], 1))
+            train_q_fvs[:,0] = np.multiply(q_train[:,0], q_train[:,1]).T
+            train_q_fvs[:,0] = np.multiply(train_q_fvs[:,0], q_train[:,2].T)
+            train_new = np.concatenate((q_train, train_q_fvs), axis=1)
+
             print "fitting cf-stacked model... "
-            m.fit(q_train, train_y)
+            m.fit(train_new, train_y)
 
             # Testing
             q_predictions = np.matrix([np.array(q_m.predict_proba(X_test)[:,1]) for q_m in q_models]).T
-            aggregate_predictions = m.predict(q_predictions)
+
+            ##### INTERACTION FEATURE (TESTING) #####
+            test_q_fvs = np.zeros((X_test.shape[0], 1))
+            test_q_fvs[:,0] = np.multiply(q_predictions[:,0], q_predictions[:,1]).T
+            test_q_fvs[:,0] = np.multiply(test_q_fvs[:,0], q_predictions[:,2].T)
+            test_new = np.concatenate((q_predictions, test_q_fvs), axis=1)
+
+            aggregate_predictions = m.predict(test_new)
         elif model == "cf-stacked-if":
             if use_grouped_data:
                 raise NotImplementedError("This CF method is not compatible with grouped data.")

@@ -397,6 +397,7 @@ def get_train_and_test_X_y(annotations, X_all, pmids, train_pmids, test_pmids,
 
 def uncertainty(model, pooled, already_selected_indices, batch_size):
     # thus the lowest will be the closest to .5 (most uncertain)
+    #pdb.set_trace()
     scores = np.abs(.5 - model.predict_proba(pooled)[:,0])
     already_selected_mask = np.zeros(pooled.shape[0])
     already_selected_mask[already_selected_indices] = 1
@@ -484,11 +485,25 @@ def run_AL(model, al_method, batch_size, num_init_labels,
             # in these cases, we also need the question models, so unpack 
             # these from the returned values.
             q_models, trained_model = trained_model
+            #pdb.set_trace()
             # we need to make feature vectors for consumption
             # by the `stacked' model; note that we make
             # predictions for *all* instances -- including 
             # those already in the selected set!
-            candidate_set = np.matrix([np.array(q_m.predict_proba(X_train)[:,1]) for q_m in q_models]).T
+            if model == "cf-stacked":
+                candidate_set = np.matrix([np.array(q_m.predict_proba(X_train)[:,1]) for q_m in q_models]).T
+            elif model == "cf-stacked-if":
+                q_train = np.matrix([np.array(q_m.predict_proba(X_train))[:,1] for q_m in q_models]).T
+                ##### INTERACTION FEATURE (TRAINING) #####
+                train_q_fvs = np.zeros((X_train.shape[0], 4))
+                train_q_fvs[:,0] = q_train[:,0].T
+                train_q_fvs[:,1] = q_train[:,1].T
+                train_q_fvs[:,2] = q_train[:,2].T
+                # 3-way interaction feature, i.e. q1,q3 and q4 predictions multiplied.
+                train_q_fvs[:,3] = np.multiply(q_train[:,0], q_train[:,1]).T
+                train_q_fvs[:,3] = np.multiply(train_q_fvs[:,3], q_train[:,2].T)
+                candidate_set = np.concatenate((candidate_set.todense(), train_q_fvs), axis=1)
+
 
 
         # this should be set to the set of instances in X_train
@@ -497,6 +512,7 @@ def run_AL(model, al_method, batch_size, num_init_labels,
 
         ###
         if al_method == "uncertainty":
+            #pdb.set_trace()
             to_label = uncertainty(trained_model, candidate_set, 
                                     cur_train_indices, batch_size)
         else: 
@@ -527,6 +543,7 @@ def _fit_and_make_predictions(model, annotations, X_all, X_train, train_y, X_tes
     '''
     
     q_models = None  # will only be defined if cf-stacked or cf-stacked-if
+    candidate_set = None # will only be defined if cf-stacked or cf-stacked-if
 
     ###
     # bcw: 10/23/15 -- switching to log-loss everywhere for AL implementation 
@@ -608,6 +625,7 @@ def _fit_and_make_predictions(model, annotations, X_all, X_train, train_y, X_tes
             m.fit(X_train_new, train_y)
             # Testing
             X_test_new = np.concatenate((X_test.todense(), test_q_fvs), axis=1) # Add interaction features
+            candidate_set = X_train_new
             aggregate_predictions = m.predict(X_test_new)
         elif model == "cf-recomposed":
             if use_rationales:

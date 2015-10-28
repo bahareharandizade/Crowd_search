@@ -491,7 +491,12 @@ def run_AL(model, al_method, batch_size, num_init_labels,
             # predictions for *all* instances -- including 
             # those already in the selected set!
             if model == "cf-stacked":
-                candidate_set = np.matrix([np.array(q_m.predict_proba(X_train)[:,1]) for q_m in q_models]).T
+                q_train = np.matrix([np.array(q_m.predict_proba(X_train)[:,1]) for q_m in q_models]).T
+                ##### INTERACTION FEATURE (TRAINING) #####
+                train_q_fvs = np.zeros((X_train.shape[0], 1))
+                train_q_fvs[:,0] = np.multiply(q_train[:,0], q_train[:,1]).T
+                train_q_fvs[:,0] = np.multiply(train_q_fvs[:,0], q_train[:,2].T)
+                candidate_set = np.concatenate((q_train, train_q_fvs), axis=1)
             elif model == "cf-stacked-bow":
                 q_train = np.matrix([np.array(q_m.predict_proba(X_train))[:,1] for q_m in q_models]).T
                 ##### INTERACTION FEATURE (TRAINING) #####

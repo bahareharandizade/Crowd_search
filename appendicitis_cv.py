@@ -458,7 +458,7 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, use
                 test_new = np.concatenate((q_predictions, test_q_fvs), axis=1)
 
                 aggregate_predictions = m.predict(test_new)
-            elif model == "cf-stacked-if":
+            elif model == "cf-stacked-bow":
                 if use_grouped_data:
                     raise NotImplementedError("This CF method is not compatible with grouped data.")
                 if use_rationales:
@@ -501,7 +501,7 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, use
                 m = get_SGD(loss="log", random_state=42, n_jobs=n_jobs)
                 # Training
                 X_train_new = np.concatenate((X_train.todense(), train_q_fvs), axis=1) # Add interaction features
-                print "fitting cf-stacked-if model... "
+                print "fitting cf-stacked-bow model... "
                 m.fit(X_train_new, train_y)
                 # Testing
                 X_test_new = np.concatenate((X_test.todense(), test_q_fvs), axis=1) # Add interaction features

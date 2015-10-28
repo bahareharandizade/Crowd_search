@@ -481,7 +481,7 @@ def run_AL(model, al_method, batch_size, num_init_labels,
         # the pool using the al_method!
         # add the selected indices to the cur_train_indices
         #
-        if model in ("cf-stacked", "cf-stacked-if"):
+        if model in ("cf-stacked", "cf-stacked-bow"):
             # in these cases, we also need the question models, so unpack 
             # these from the returned values.
             q_models, trained_model = trained_model
@@ -492,7 +492,7 @@ def run_AL(model, al_method, batch_size, num_init_labels,
             # those already in the selected set!
             if model == "cf-stacked":
                 candidate_set = np.matrix([np.array(q_m.predict_proba(X_train)[:,1]) for q_m in q_models]).T
-            elif model == "cf-stacked-if":
+            elif model == "cf-stacked-bow":
                 q_train = np.matrix([np.array(q_m.predict_proba(X_train))[:,1] for q_m in q_models]).T
                 ##### INTERACTION FEATURE (TRAINING) #####
                 train_q_fvs = np.zeros((X_train.shape[0], 4))
@@ -542,8 +542,7 @@ def _fit_and_make_predictions(model, annotations, X_all, X_train, train_y, X_tes
     make predictions 
     '''
     
-    q_models = None  # will only be defined if cf-stacked or cf-stacked-if
-    candidate_set = None # will only be defined if cf-stacked or cf-stacked-if
+    q_models = None  # will only be defined if cf-stacked or cf-stacked-bow
 
     ###
     # bcw: 10/23/15 -- switching to log-loss everywhere for AL implementation 
@@ -592,7 +591,7 @@ def _fit_and_make_predictions(model, annotations, X_all, X_train, train_y, X_tes
             test_new = np.concatenate((q_predictions, test_q_fvs), axis=1)
 
             aggregate_predictions = m.predict(test_new)
-        elif model == "cf-stacked-if":
+        elif model == "cf-stacked-bow":
             if use_grouped_data:
                 raise NotImplementedError("This CF method is not compatible with grouped data.")
             if use_rationales:
@@ -635,7 +634,7 @@ def _fit_and_make_predictions(model, annotations, X_all, X_train, train_y, X_tes
             m = get_SGD(loss="log", random_state=42, n_jobs=n_jobs)
             # Training
             X_train_new = np.concatenate((X_train.todense(), train_q_fvs), axis=1) # Add interaction features
-            print "fitting cf-stacked-if model... "
+            print "fitting cf-stacked-bow model... "
             m.fit(X_train_new, train_y)
             # Testing
             X_test_new = np.concatenate((X_test.todense(), test_q_fvs), axis=1) # Add interaction features
@@ -670,7 +669,7 @@ def _fit_and_make_predictions(model, annotations, X_all, X_train, train_y, X_tes
         raise NotImplementedError('No such method exists.')
 
     if return_model:
-        if model in ("cf-stacked", "cf-stacked-if"):
+        if model in ("cf-stacked", "cf-stacked-bow"):
             # then we also return the individual question models!
             return aggregate_predictions, (q_models, m)
         else:   

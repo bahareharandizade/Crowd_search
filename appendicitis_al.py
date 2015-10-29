@@ -438,16 +438,16 @@ def run_AL(model, al_method, batch_size, num_init_labels,
     # to have labeled -- may consider explicitly 
     # starting wtih a balanced sample!
 
+    
     if init_set_path is None:
         cur_train_indices = np.random.choice(X_train.shape[0], num_init_labels, replace=False).tolist()
     else:
         if os.path.isfile(init_set_path):
             cur_train_indices = cPickle.load(open(init_set_path, 'rb'))
-            pass
         else:
             cur_train_indices = np.random.choice(X_train.shape[0], num_init_labels, replace=False).tolist()
             cPickle.dump(cur_train_indices, open(init_set_path, 'wb'))
-            pass
+    
     n_lbls = num_init_labels
 
     while n_lbls < total_num_lbls_to_acquire:

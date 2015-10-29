@@ -594,6 +594,10 @@ def run_AL_fp(model, al_method, batch_size,
         # for future ref, we record the num lbls so 
         # far and the confusion matrix.
         tn, fp, fn, tp = metrics.confusion_matrix(np.array(true_y)[~train_idx], aggregate_predictions).flatten()
+        training_lbls = np.array(true_y)[train_idx]
+        # assume labels are correct
+        tp += training_lbls[training_lbls>0].shape[0]
+        tn += training_lbls[training_lbls<=0].shape[0]
 
         ###
         # bcw 10/29 TODO TODO TODO probably want to re-visit metrics. i think 
@@ -971,7 +975,7 @@ BCW notes (10/29/2015)
 def rationales_exp_all_active_fp(model="cf-stacked", use_worker_qualities=False, 
                             n_jobs=1, n_runs=5, use_grouped_data=False,
                             use_decomposed_training=False, use_rationales=False,
-                            al_method="uncertainty", batch_size=20, num_init_labels=200,
+                            al_method="uncertainty", batch_size=20, num_init_labels=400,
                             init_set_path=None):
     ##
     # basics: just load in the data + labels, vectorize

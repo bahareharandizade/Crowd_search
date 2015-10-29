@@ -247,7 +247,7 @@ def get_q_rationales(data, qnum, pmids=None):
 def get_SGD(class_weight="auto", loss="log", random_state=None, fit_params=None, n_jobs=1):
     #C_range = np.logspace(-2, 10, 13)
     #return SGDClassifier(penalty=None)#, class_weight="auto")
-    params_d = {"alpha": 10.0**-np.arange(0,8)}
+    params_d = {"alpha": 10.0**-np.arange(0,6)}
     
     q_model = SGDClassifier(class_weight=class_weight, loss=loss, random_state=random_state, n_jobs=n_jobs)
 
@@ -670,7 +670,7 @@ def run_AL_fp(model, al_method, batch_size,
         
         ### may want to update accordingly if you change
         ### batchsize?
-        if (n_lbls % (batch_size * 5)) == 0: 
+        if (n_lbls % (5 * batch_size)) == 0: 
             print "labeled %s instances so far" % n_lbls
             _pretty_print_d(cur_results_d)
             print "\n---"

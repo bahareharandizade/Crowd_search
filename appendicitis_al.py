@@ -315,6 +315,81 @@ def cartesian(arrays, out=None):
     return out
 
 
+def get_all_train_and_test_X_and_y(annotations, pmids, X_all, lvl1_pmids, lvl2_pmids, 
+                use_decomposed_training=False, use_grouped_data=False):
+    true_y = []  # to be used for eval
+    train_y = [] # to be used for training
+    worker_ids = []
+    X = []
+    for i, pmid in enumerate(pmids):
+        ###
+        #  for training (crowd labels)
+        ####
+        q_decisions_for_pmid = annotations[annotations['documentId'] == pmid]
+        for worker, question_answers in q_decisions_for_pmid.groupby("workerId"):
+            # calculate the 'effective' label given by this worker,
+            # as a function of their question decisions
+            if use_decomposed_training:
+                if use_grouped_data:
+                    raise NotImplementedError("Grouped data is not compatible with decomposed training")
+                q1 = question_answers[['q1']].values[0]
+                q2 = question_answers[['q2']].values[0]
+                q3 = question_answers[['q3']].values[0]
+                q4 = question_answers[['q4']].values[0][0]
+                q1a = -1 if (q1 == "No" or q1 == "\\N") else 1
+                q4a = -1 if (q4 == "No" or q4 == "\\N") else 1
+                q3a = -1 if (q3 == "No" or q3 == "\\N") else 1
+                q2a = -1 if (q2 == '\\N' or (q2 != 'NoInfo' and q2 < 10)) else 1
+
+                # Extra interaction feature in the form of the final answer
+                question_answers_txt = question_answers[['q1', 'q3', 'q4']].values[0]
+                question_answer_num = question_answers[['q2']].values[0][0]
+                final_answer = -1 if ("No" in question_answers_txt or "\\N" in question_answers_txt or
+                                      (question_answer_num == '\\N' or
+                                       (question_answer_num != 'NoInfo' and question_answer_num < 10)))\
+                                  else 1
+
+                # Add answers and final answer interaction feature to training data.
+                train_y.append(q1a)
+                train_y.append(q2a)
+                train_y.append(q3a)
+                train_y.append(q4a)
+                train_y.append(final_answer)
+
+                # one per question
+                for _ in range(5):
+                    train_worker_ids.append(worker)
+
+                for _ in range(5):
+                    X.append(X_all[i])
+
+            else:
+                final_answer = None
+                if use_grouped_data:
+                    # bcw 10/29 -- this seems odd to me; why are we saying '1'
+                    # iff the answer to the first question is yes? @TODO revisit?
+                    question_answer = question_answers[['q1']].values[0]
+                    final_answer = -1 if ("No" in question_answer) else 1
+                else:
+                    question_answers_txt = question_answers[['q1', 'q3', 'q4']].values[0]
+                    question_answer_num = question_answers[['q2']].values[0][0]
+                    final_answer = -1 if ("No" in question_answers_txt or "\\N" in question_answers_txt or
+                                          (question_answer_num == '\\N' or
+                                           (question_answer_num != 'NoInfo' and question_answer_num < 10)))\
+                                      else 1
+
+                train_y.append(final_answer)
+                worker_ids.append(worker)
+
+        ####
+        # for evaluation; expert labels
+        ####
+        true_lbl = 1 if pmid in lvl1_pmids else -1
+        true_y.append(true_lbl)
+        
+    return X, train_y, worker_ids, true_y
+
+
 
 ''' BCW (10/22/2015): factoring into routine '''
 def get_train_and_test_X_y(annotations, X_all, pmids, train_pmids, test_pmids, 
@@ -327,6 +402,7 @@ def get_train_and_test_X_y(annotations, X_all, pmids, train_pmids, test_pmids,
     train_worker_ids = [] # for grouped
 
     # Build train_y on questions and test_y on ground truth.
+    #train_annotations = annotations.copy()
     for i, pmid in enumerate(pmids):
         if pmid in train_pmids:
             q_decisions_for_pmid = annotations[annotations['documentId'] == pmid]
@@ -382,6 +458,7 @@ def get_train_and_test_X_y(annotations, X_all, pmids, train_pmids, test_pmids,
                     cur_train_indices.append(i)
                     train_worker_ids.append(worker)
         elif pmid in test_pmids:
+            #np.delete(train_annotations, np.where(annotations['documentId']==pmid)[0].tolist(), 0)
             lbl = 1 if pmid in lvl1_pmids else -1
             test_y.append(lbl)
             cur_test_indices.append(i)
@@ -395,19 +472,209 @@ def get_train_and_test_X_y(annotations, X_all, pmids, train_pmids, test_pmids,
     return X_train, train_y, X_test, test_y, train_worker_ids
 
 
-def uncertainty(model, pooled, already_selected_indices, batch_size):
+####
+# bcw: reimplemented to be much simpler. arguably could use a better name.
+###
+def uncertainty2(model, candidate_X, pmids, batch_size):
+    #pdb.set_trace()
+    scores = np.abs(.5 - model.predict_proba(candidate_X)[:,0])
+    indices = np.argsort(scores)[:batch_size]
+    return pmids[indices]
+
+
+def uncertainty(model, pooled, annotations, pmids, already_selected_indices, batch_size):
     # thus the lowest will be the closest to .5 (most uncertain)
     #pdb.set_trace()
+    lim_anno_ids = [v for sublist in [np.where(annotations['documentId'] == p)[0].tolist() for p in pmids] for v in sublist]
+    limited_annotations = annotations.take(lim_anno_ids,axis=0)
+    corrected_indices = getAnnotations(annotations, pmids, already_selected_indices)
     scores = np.abs(.5 - model.predict_proba(pooled)[:,0])
     already_selected_mask = np.zeros(pooled.shape[0])
-    already_selected_mask[already_selected_indices] = 1
-    scores[already_selected_indices] = np.inf
+    already_selected_mask[corrected_indices] = 1
+    scores[corrected_indices] = np.inf
     ranked_indices = np.argsort(scores)
-    return ranked_indices[:batch_size]
+    pmidsToLabel = []
+    i = 0
+    #pdb.set_trace()
+    while len(pmidsToLabel) < batch_size and i < len(ranked_indices):
+        pmid = limited_annotations['documentId'].tolist()[ranked_indices[i]]
+        if pmid not in pmidsToLabel:
+            pmidsToLabel.append(pmid)
+
+        i = i + 1
+    #pdb.set_trace()
+    return pmidsToLabel
 
 def _pretty_print_d(d): 
     for key, val in d.items(): 
         print "%s: %s" % (key, val)
+
+
+def getAnnotations(annotations, train_pmids, chosen_pmids):
+    ids = []
+    lim_anno_ids = [v for sublist in [np.where(annotations['documentId'] == p)[0].tolist() for p in train_pmids] for v in sublist]
+    limited_annotations = annotations.take(lim_anno_ids,axis=0)
+    for pmid in chosen_pmids:
+        ids.extend(np.where(limited_annotations['documentId']==pmid)[0].tolist())
+
+    return ids
+
+
+def corRef(reflist, pmids):
+    correctedList = []
+    for pmid in pmids:
+        correctedList.append(np.where(reflist==pmid))
+
+    return correctedList
+
+def _get_mask(length, indices):
+    idx = np.zeros(length, dtype='bool')
+    idx[indices] = True 
+    return idx
+
+
+def run_AL_fp(model, al_method, batch_size, 
+            num_init_labels,
+            annotations, X_all, train_y, true_y, pmids, vectorizer, 
+            worker_ids, use_grouped_data=False,
+            use_worker_qualities=False, use_rationales=False,
+            n_jobs=1, init_set_path="init_set.pickle"):
+    
+    n_lbls_so_far = 0 
+
+    # bcw: one half seems reasonable
+    total_num_lbls_to_acquire = X_all.shape[0]/2.0
+
+
+    # maintain the learning curve -- right now,
+    # the complete confusion matrix at each step
+    learning_curve = []
+
+    # probably start by randomly selecting a few instances
+    # to have labeled -- may consider explicitly 
+    # starting wtih a balanced sample!
+    cur_train_pmids = []
+    if init_set_path is None:
+        cur_train_pmids = np.random.choice(pmids, num_init_labels, replace=False).tolist()
+    else:
+        if os.path.isfile(init_set_path):
+            cur_train_indices = cPickle.load(open(init_set_path, 'rb'))
+        else:
+            cur_train_indices = np.random.choice(pmids, num_init_labels, replace=False).tolist()
+            cPickle.dump(cur_train_indices, open(init_set_path, 'wb'))
+
+    n_lbls = num_init_labels
+    
+
+    while n_lbls < total_num_lbls_to_acquire:
+       
+        # once everything is labele, train the model and make predictions
+        # bcw: am trusting this gives me the indices from the pmids!
+        #pdb.set_trace()
+
+        # get the indices into X for the selected PMIDs.
+        cur_train_pmid_indices = [j for j in xrange(len(pmids)) if pmids[j] in cur_train_pmids]
+        train_idx = _get_mask(X_all.shape[0], cur_train_pmid_indices)
+
+        # bcw 10/29: NOTE that the None here is an argument no 
+        # no longer used by the _fit_and_make_predictions routine!
+        # i left because didn't want to change method signature/break
+        # other things
+        # @TODO remove
+        #train_worker_ids = [worker_ids[j] for j in pmid_indices]
+        #pdb.set_trace()
+        aggregate_predictions, trained_model = _fit_and_make_predictions(
+                    model, annotations, X_all, None, X_all[train_idx],
+                    np.array(train_y)[train_idx], X_all[~train_idx], pmids, cur_train_pmids, 
+                    vectorizer, np.array(worker_ids)[train_idx],
+                    use_grouped_data=use_grouped_data, use_worker_qualities=use_worker_qualities,
+                    use_rationales=use_rationales, n_jobs=n_jobs, return_model=True)
+
+        # how are we doing so far? 
+        # for future ref, we record the num lbls so 
+        # far and the confusion matrix.
+        tn, fp, fn, tp = metrics.confusion_matrix(np.array(true_y)[~train_idx], aggregate_predictions).flatten()
+
+        ###
+        # bcw 10/29 TODO TODO TODO probably want to re-visit metrics. i think 
+        # using total tn, fp, fn and fp counts is sensible, multipled through
+        # by some scalar for asymmetry
+        sensitivity, specificity, precision, f2measure = ar.compute_measures(tp, fp, fn, tn)
+        #auc = metrics.roc_auc_score(np.array(true_y)[~train_idx], aggregate_predictions)
+        cur_results_d = {"sensitivity":sensitivity, "specificity":specificity,
+                            "precision":precision, "F2":f2measure} #, "AUC":auc}
+
+        learning_curve.append((n_lbls, cur_results_d))
+
+        # the candidate set will depend on the method;
+        # because in the case of stacked models, for example,
+        # the feature sets will be different.
+        candidate_set = X_all.copy()
+
+        # now pick num_lbls_to_acquire instances still in
+        # the pool using the al_method!
+        # add the selected indices to the cur_train_indices
+        #
+        if model in ("cf-stacked", "cf-stacked-bow"):
+
+            # in these cases, we also need the question models, so unpack 
+            # these from the returned values.
+            q_models, trained_model = trained_model
+            #pdb.set_trace()
+            # we need to make feature vectors for consumption
+            # by the `stacked' model; note that we make
+            # predictions for *all* instances -- including 
+            # those already in the selected set!
+            if model == "cf-stacked":
+                q_train = np.matrix([np.array(q_m.predict_proba(X_all)[:,1]) for q_m in q_models]).T
+                ##### INTERACTION FEATURE (TRAINING) #####
+                train_q_fvs = np.zeros((X_all.shape[0], 1))
+                train_q_fvs[:,0] = np.multiply(q_train[:,0], q_train[:,1]).T
+                train_q_fvs[:,0] = np.multiply(train_q_fvs[:,0], q_train[:,2].T)
+                candidate_set = np.concatenate((q_train, train_q_fvs), axis=1)
+            elif model == "cf-stacked-bow":
+                q_train = np.matrix([np.array(q_m.predict_proba(X_all))[:,1] for q_m in q_models]).T
+                ##### INTERACTION FEATURE (TRAINING) #####
+                train_q_fvs = np.zeros((X_all.shape[0], 4))
+                train_q_fvs[:,0] = q_train[:,0].T
+                train_q_fvs[:,1] = q_train[:,1].T
+                train_q_fvs[:,2] = q_train[:,2].T
+                # 3-way interaction feature, i.e. q1,q3 and q4 predictions multiplied.
+                train_q_fvs[:,3] = np.multiply(q_train[:,0], q_train[:,1]).T
+                train_q_fvs[:,3] = np.multiply(train_q_fvs[:,3], q_train[:,2].T)
+                candidate_set = np.concatenate((candidate_set.todense(), train_q_fvs), axis=1)
+
+
+
+        # this should be set to the set of instances in X_train
+        # to `label' next. 
+        to_label = None 
+
+        ###
+        if al_method == "uncertainty":
+            pmids_to_label = uncertainty2(trained_model, candidate_set[~train_idx], 
+                                            pmids[~train_idx], batch_size)
+
+        elif al_method == "random":
+            pmids_to_label = np.random.choice(pmids[~train_idx], batch_size, replace=False)
+        else: 
+            raise Exception("method not implemented!")
+
+        # now effectively `label' the selected instances.
+        cur_train_pmids.extend(pmids_to_label)
+        n_lbls = len(cur_train_pmids)
+        
+        ### may want to update accordingly if you change
+        ### batchsize?
+        if (n_lbls % (batch_size * 5)) == 0: 
+            print "labeled %s instances so far" % n_lbls
+            _pretty_print_d(cur_results_d)
+            print "\n---"
+
+
+    return learning_curve
+
+
 
 
 def run_AL(model, al_method, batch_size, num_init_labels,
@@ -428,7 +695,11 @@ def run_AL(model, al_method, batch_size, num_init_labels,
     '''
 
     n_lbls_so_far = 0 
+
+    # bcw: this seems like an odd default to have... why only 1/10th
+    # of the data???
     total_num_lbls_to_acquire = X_train.shape[0]/10.0
+
 
     # maintain the learning curve -- right now,
     # the complete confusion matrix at each step
@@ -440,22 +711,23 @@ def run_AL(model, al_method, batch_size, num_init_labels,
 
     
     if init_set_path is None:
-        cur_train_indices = np.random.choice(X_train.shape[0], num_init_labels, replace=False).tolist()
+        cur_train_indices = np.random.choice(train_pmids, num_init_labels, replace=False).tolist()
     else:
         if os.path.isfile(init_set_path):
             cur_train_indices = cPickle.load(open(init_set_path, 'rb'))
         else:
-            cur_train_indices = np.random.choice(X_train.shape[0], num_init_labels, replace=False).tolist()
+            cur_train_indices = np.random.choice(train_pmids, num_init_labels, replace=False).tolist()
             cPickle.dump(cur_train_indices, open(init_set_path, 'wb'))
-    
+
     n_lbls = num_init_labels
 
     while n_lbls < total_num_lbls_to_acquire:
         #pdb.set_trace()
         # once everything is labele, train the model and make predictions
+        actual_indices = getAnnotations(annotations, train_pmids, cur_train_indices)
         aggregate_predictions, trained_model = _fit_and_make_predictions(
-                    model, annotations, X_all, cur_train_indices, X_train[cur_train_indices],
-                    train_y[cur_train_indices], 
+                    model, annotations, X_all, actual_indices, X_train[actual_indices],
+                    train_y[actual_indices],
                     X_test, pmids, train_pmids, vectorizer, train_worker_ids,
                     use_grouped_data=use_grouped_data, use_worker_qualities=use_worker_qualities,
                     use_rationales=use_rationales, n_jobs=n_jobs, return_model=True)
@@ -491,7 +763,12 @@ def run_AL(model, al_method, batch_size, num_init_labels,
             # predictions for *all* instances -- including 
             # those already in the selected set!
             if model == "cf-stacked":
-                candidate_set = np.matrix([np.array(q_m.predict_proba(X_train)[:,1]) for q_m in q_models]).T
+                q_train = np.matrix([np.array(q_m.predict_proba(X_train)[:,1]) for q_m in q_models]).T
+                ##### INTERACTION FEATURE (TRAINING) #####
+                train_q_fvs = np.zeros((X_train.shape[0], 1))
+                train_q_fvs[:,0] = np.multiply(q_train[:,0], q_train[:,1]).T
+                train_q_fvs[:,0] = np.multiply(train_q_fvs[:,0], q_train[:,2].T)
+                candidate_set = np.concatenate((q_train, train_q_fvs), axis=1)
             elif model == "cf-stacked-bow":
                 q_train = np.matrix([np.array(q_m.predict_proba(X_train))[:,1] for q_m in q_models]).T
                 ##### INTERACTION FEATURE (TRAINING) #####
@@ -513,8 +790,8 @@ def run_AL(model, al_method, batch_size, num_init_labels,
         ###
         if al_method == "uncertainty":
             #pdb.set_trace()
-            to_label = uncertainty(trained_model, candidate_set, 
-                                    cur_train_indices, batch_size)
+            to_label = uncertainty(trained_model, candidate_set, annotations,
+                                   train_pmids, cur_train_indices, batch_size)
         else: 
             raise Exception("method not implemented!")
 
@@ -533,8 +810,11 @@ def run_AL(model, al_method, batch_size, num_init_labels,
     return learning_curve
 
 
-def _fit_and_make_predictions(model, annotations, X_all, cur_train_indices, X_train, train_y, X_test, pmids,
-                                train_pmids, vectorizer, train_worker_ids, use_grouped_data=False,
+### BCW note that cur_train_indices is NOT used here! 
+### @TODO remove - leaving for now so as not to break...
+def _fit_and_make_predictions(model, annotations, X_all, cur_train_indices, X_train, train_y, X_test, 
+                                pmids, train_pmids, vectorizer, train_worker_ids, 
+                                use_grouped_data=False,
                                 use_worker_qualities=False, use_rationales=False,
                                 n_jobs=1, return_model=False):
     ''' 
@@ -567,7 +847,7 @@ def _fit_and_make_predictions(model, annotations, X_all, cur_train_indices, X_tr
                                         n_jobs=n_jobs)
 
             ##### STACKING #####
-            m = get_SGD(loss="log", random_state=42, n_jobs=n_jobs)
+            m = get_SGD(loss="log", class_weight="auto", random_state=42, n_jobs=n_jobs)
 
             # Training
             q_train = np.matrix([np.array(q_m.predict_proba(X_train))[:,1] for q_m in q_models]).T
@@ -631,7 +911,7 @@ def _fit_and_make_predictions(model, annotations, X_all, cur_train_indices, X_tr
 
 
             ##### STACKING #####
-            m = get_SGD(loss="log", random_state=42, n_jobs=n_jobs)
+            m = get_SGD(loss="log", class_weight="auto", random_state=42, n_jobs=n_jobs)
             # Training
             X_train_new = np.concatenate((X_train.todense(), train_q_fvs), axis=1) # Add interaction features
             print "fitting cf-stacked-bow model... "
@@ -678,6 +958,66 @@ def _fit_and_make_predictions(model, annotations, X_all, cur_train_indices, X_tr
     return aggregate_predictions
 
 
+
+
+
+'''
+BCW notes (10/29/2015)
+---
+* Finite pool 
+
+* Not clear if you want to do n_runs here or just call this n_runs times. 
+'''
+def rationales_exp_all_active_fp(model="cf-stacked", use_worker_qualities=False, 
+                            n_jobs=1, n_runs=5, use_grouped_data=False,
+                            use_decomposed_training=False, use_rationales=False,
+                            al_method="uncertainty", batch_size=20, num_init_labels=200,
+                            init_set_path=None):
+    ##
+    # basics: just load in the data + labels, vectorize
+    annotations = load_appendicitis_annotations(use_grouped_data)
+    lvl1_pmids, lvl2_pmids = read_lbls()
+
+    # Data
+    texts, pmids = load_texts_and_pmids()
+    vectorizer = TfidfVectorizer(stop_words="english", ngram_range=(1,2), min_df=3, max_features=50000)
+    X_all = vectorizer.fit_transform(texts)
+
+    # Generating folds (pool/not pool splits, here)
+    unique_labeled_pmids = list(set(annotations['documentId']))
+
+
+    learning_curves = []
+
+    #X_train, train_y, X_test, test_y, train_worker_ids = get_train_and_test_X_y(
+    #        annotations, X_all, pmids, train_pmids, test_pmids, 
+    #        model, lvl1_pmids, lvl2_pmids, use_grouped_data=use_grouped_data,
+    #        use_decomposed_training=use_decomposed_training)
+
+    X, train_y, train_worker_ids, true_y = get_all_train_and_test_X_and_y(
+            annotations, pmids, X_all, lvl2_pmids, lvl2_pmids, 
+            use_grouped_data=use_grouped_data, 
+            use_decomposed_training=use_decomposed_training)
+
+    for run in range(n_runs):    
+        # now run active learning experiment over train/test split
+        cur_learning_curve = run_AL_fp(model, al_method, batch_size, 
+            num_init_labels,
+            annotations, X_all, train_y, true_y, pmids, vectorizer, 
+            train_worker_ids, use_grouped_data=False,
+            use_worker_qualities=False, use_rationales=False,
+            n_jobs=1, init_set_path=None)
+
+        learning_curves.append(cur_learning_curve)
+
+    ####
+    # this will be a list of length n_folds, where each entry is a list
+    # describing the results over active learning for this strategy
+    return learning_curves
+
+
+
+
 '''
 BCW notes (10/22/2015)
 ---
@@ -692,7 +1032,7 @@ BCW notes (10/22/2015)
 def rationales_exp_all_active(model="cf-stacked", use_worker_qualities=False, 
                             n_jobs=1, n_folds=5, use_grouped_data=False,
                             use_decomposed_training=False, use_rationales=False,
-                            al_method="uncertainty", batch_size=10, num_init_labels=100,
+                            al_method="uncertainty", batch_size=10, num_init_labels=200,
                             init_set_path=None):
     ##
     # basics: just load in the data + labels, vectorize
@@ -708,7 +1048,7 @@ def rationales_exp_all_active(model="cf-stacked", use_worker_qualities=False,
     unique_labeled_pmids = list(set(annotations['documentId']))
     folds = KFold(len(unique_labeled_pmids), 
                     n_folds=n_folds, shuffle=True, random_state=42)
-    
+
     learning_curves = []
 
     for train_indices, test_indices in folds:
@@ -724,7 +1064,7 @@ def rationales_exp_all_active(model="cf-stacked", use_worker_qualities=False,
 
         # now run active learning experiment over train/test split
         cur_learning_curve = run_AL(model, al_method, batch_size, num_init_labels,
-            annotations, X_all, X_train, train_y, X_test, test_y, pmids, 
+            annotations, X_all, X_train, train_y, X_test, test_y, pmids,
             train_pmids, vectorizer, train_worker_ids, use_grouped_data=use_grouped_data,
             use_worker_qualities=use_worker_qualities, use_rationales=use_rationales,
             n_jobs=n_jobs, init_set_path=init_set_path)

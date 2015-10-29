@@ -327,6 +327,7 @@ def get_train_and_test_X_y(annotations, X_all, pmids, train_pmids, test_pmids,
     train_worker_ids = [] # for grouped
 
     # Build train_y on questions and test_y on ground truth.
+    #train_annotations = annotations.copy()
     for i, pmid in enumerate(pmids):
         if pmid in train_pmids:
             q_decisions_for_pmid = annotations[annotations['documentId'] == pmid]
@@ -382,6 +383,7 @@ def get_train_and_test_X_y(annotations, X_all, pmids, train_pmids, test_pmids,
                     cur_train_indices.append(i)
                     train_worker_ids.append(worker)
         elif pmid in test_pmids:
+            #np.delete(train_annotations, np.where(annotations['documentId']==pmid)[0].tolist(), 0)
             lbl = 1 if pmid in lvl1_pmids else -1
             test_y.append(lbl)
             cur_test_indices.append(i)
@@ -395,19 +397,50 @@ def get_train_and_test_X_y(annotations, X_all, pmids, train_pmids, test_pmids,
     return X_train, train_y, X_test, test_y, train_worker_ids
 
 
-def uncertainty(model, pooled, already_selected_indices, batch_size):
+def uncertainty(model, pooled, annotations, pmids, already_selected_indices, batch_size):
     # thus the lowest will be the closest to .5 (most uncertain)
     #pdb.set_trace()
+    lim_anno_ids = [v for sublist in [np.where(annotations['documentId'] == p)[0].tolist() for p in pmids] for v in sublist]
+    limited_annotations = annotations.take(lim_anno_ids,axis=0)
+    corrected_indices = getAnnotations(annotations, pmids, already_selected_indices)
     scores = np.abs(.5 - model.predict_proba(pooled)[:,0])
     already_selected_mask = np.zeros(pooled.shape[0])
-    already_selected_mask[already_selected_indices] = 1
-    scores[already_selected_indices] = np.inf
+    already_selected_mask[corrected_indices] = 1
+    scores[corrected_indices] = np.inf
     ranked_indices = np.argsort(scores)
-    return ranked_indices[:batch_size]
+    pmidsToLabel = []
+    i = 0
+    #pdb.set_trace()
+    while len(pmidsToLabel) < batch_size and i < len(ranked_indices):
+        pmid = limited_annotations['documentId'].tolist()[ranked_indices[i]]
+        if pmid not in pmidsToLabel:
+            pmidsToLabel.append(pmid)
+
+        i = i + 1
+    #pdb.set_trace()
+    return pmidsToLabel
 
 def _pretty_print_d(d): 
     for key, val in d.items(): 
         print "%s: %s" % (key, val)
+
+
+def getAnnotations(annotations, train_pmids, chosen_pmids):
+    ids = []
+    lim_anno_ids = [v for sublist in [np.where(annotations['documentId'] == p)[0].tolist() for p in train_pmids] for v in sublist]
+    limited_annotations = annotations.take(lim_anno_ids,axis=0)
+    for pmid in chosen_pmids:
+        ids.extend(np.where(limited_annotations['documentId']==pmid)[0].tolist())
+
+    return ids
+
+
+def corRef(reflist, pmids):
+    correctedList = []
+    for pmid in pmids:
+        correctedList.append(np.where(reflist==pmid))
+
+    return correctedList
 
 
 def run_AL(model, al_method, batch_size, num_init_labels,
@@ -428,7 +461,7 @@ def run_AL(model, al_method, batch_size, num_init_labels,
     '''
 
     n_lbls_so_far = 0 
-    total_num_lbls_to_acquire = X_train.shape[0]
+    total_num_lbls_to_acquire = len(pmids)
 
     # maintain the learning curve -- right now,
     # the complete confusion matrix at each step
@@ -439,23 +472,22 @@ def run_AL(model, al_method, batch_size, num_init_labels,
     # starting wtih a balanced sample!
 
     if init_set_path is None:
-        cur_train_indices = np.random.choice(X_train.shape[0], num_init_labels, replace=False).tolist()
+        cur_train_indices = np.random.choice(train_pmids, num_init_labels, replace=False).tolist()
     else:
         if os.path.isfile(init_set_path):
             cur_train_indices = cPickle.load(open(init_set_path, 'rb'))
-            pass
         else:
-            cur_train_indices = np.random.choice(X_train.shape[0], num_init_labels, replace=False).tolist()
+            cur_train_indices = np.random.choice(train_pmids, num_init_labels, replace=False).tolist()
             cPickle.dump(cur_train_indices, open(init_set_path, 'wb'))
-            pass
     n_lbls = num_init_labels
 
     while n_lbls < total_num_lbls_to_acquire:
         #pdb.set_trace()
         # once everything is labele, train the model and make predictions
+        actual_indices = getAnnotations(annotations, train_pmids, cur_train_indices)
         aggregate_predictions, trained_model = _fit_and_make_predictions(
-                    model, annotations, X_all, cur_train_indices, X_train[cur_train_indices],
-                    train_y[cur_train_indices], 
+                    model, annotations, X_all, actual_indices, X_train[actual_indices],
+                    train_y[actual_indices],
                     X_test, pmids, train_pmids, vectorizer, train_worker_ids,
                     use_grouped_data=use_grouped_data, use_worker_qualities=use_worker_qualities,
                     use_rationales=use_rationales, n_jobs=n_jobs, return_model=True)
@@ -518,8 +550,8 @@ def run_AL(model, al_method, batch_size, num_init_labels,
         ###
         if al_method == "uncertainty":
             #pdb.set_trace()
-            to_label = uncertainty(trained_model, candidate_set, 
-                                    cur_train_indices, batch_size)
+            to_label = uncertainty(trained_model, candidate_set, annotations,
+                                   train_pmids, cur_train_indices, batch_size)
         else: 
             raise Exception("method not implemented!")
 
@@ -713,7 +745,7 @@ def rationales_exp_all_active(model="cf-stacked", use_worker_qualities=False,
     unique_labeled_pmids = list(set(annotations['documentId']))
     folds = KFold(len(unique_labeled_pmids), 
                     n_folds=n_folds, shuffle=True, random_state=42)
-    
+
     learning_curves = []
 
     for train_indices, test_indices in folds:
@@ -729,7 +761,7 @@ def rationales_exp_all_active(model="cf-stacked", use_worker_qualities=False,
 
         # now run active learning experiment over train/test split
         cur_learning_curve = run_AL(model, al_method, batch_size, num_init_labels,
-            annotations, X_all, X_train, train_y, X_test, test_y, pmids, 
+            annotations, X_all, X_train, train_y, X_test, test_y, pmids,
             train_pmids, vectorizer, train_worker_ids, use_grouped_data=use_grouped_data,
             use_worker_qualities=use_worker_qualities, use_rationales=use_rationales,
             n_jobs=n_jobs, init_set_path=init_set_path)

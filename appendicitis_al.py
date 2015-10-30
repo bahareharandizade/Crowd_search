@@ -601,7 +601,8 @@ def run_AL_fp(model, al_method, batch_size,
                 tn = len(aggregate_predictions)
             else:
                 tp = len(aggregate_predictions)
-            fp,fn = 0
+            fp = 0
+            fn = 0
         training_lbls = np.array(true_y)[train_idx]
         # assume labels are correct
         tp += training_lbls[training_lbls>0].shape[0]

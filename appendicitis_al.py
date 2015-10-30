@@ -594,7 +594,14 @@ def run_AL_fp(model, al_method, batch_size,
         # how are we doing so far? 
         # for future ref, we record the num lbls so 
         # far and the confusion matrix.
-        tn, fp, fn, tp = metrics.confusion_matrix(np.array(true_y)[~train_idx], aggregate_predictions).flatten()
+        if not np.array_equal(np.array(true_y)[~train_idx], aggregate_predictions):
+            tn, fp, fn, tp = metrics.confusion_matrix(np.array(true_y)[~train_idx], aggregate_predictions).flatten()
+        else:
+            if(aggregate_predictions[0] == -1):
+                tn = len(aggregate_predictions)
+            else:
+                tp = len(aggregate_predictions)
+            fp,fn = 0
         training_lbls = np.array(true_y)[train_idx]
         # assume labels are correct
         tp += training_lbls[training_lbls>0].shape[0]

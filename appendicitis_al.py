@@ -950,7 +950,7 @@ def _fit_and_make_predictions(model, annotations, X_all, cur_train_indices, X_tr
                 aggregate_predictions = m.predict(X_test)
             else:
                 if use_worker_qualities:
-                    instance_quality_d = estimate_quality_instance_level(annotations, train_pmids, use_grouped_data=use_grouped_data)
+                    instance_quality_d = estimate_quality_instance_level(annotations, pmids, use_grouped_data=use_grouped_data)
                     worker_weights = [instance_quality_d[w] for w in train_worker_ids]
                     m = get_SGD(loss="log", random_state=42, fit_params={"sample_weight":worker_weights}, n_jobs=n_jobs)
                     print "fitting cf-recomposed model... "

@@ -948,7 +948,7 @@ def _fit_and_make_predictions(model, annotations, X_all, cur_train_indices, X_tr
                     print "fitting cf-recomposed model... "
                     m.fit(X_train, train_y)
                 else:
-                    m = get_SGD(loss="log", n_jobs=n_jobs)
+                    m = get_SGD(loss="log", random_state=42, n_jobs=n_jobs)
                     print "fitting cf-recomposed model... "
                     m.fit(X_train, train_y)
 

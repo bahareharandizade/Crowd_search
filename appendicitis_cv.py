@@ -11,10 +11,14 @@ import numpy as np
 
 from nltk import word_tokenize
 
-import pandas as pd 
+import pandas as pd
+
+from scipy import interp
+import matplotlib.pyplot as plt
 
 import sklearn 
 from sklearn import metrics
+from sklearn.metrics import roc_curve, auc
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cross_validation import KFold
 from sklearn.grid_search import GridSearchCV
@@ -332,7 +336,10 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, use
 
     # Array for extra training instances
     cm = np.zeros(4)
-    auc = []
+    auc_list = []
+    mean_tpr = 0.0
+    mean_fpr = np.linspace(0, 1, 100)
+    all_tpr = []
     for train_indices, test_indices in folds:
 
         # Split into training and testing PMIDs
@@ -537,10 +544,18 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, use
 
         # Update statistics
         cm += metrics.confusion_matrix(test_y, aggregate_predictions).flatten()
-        auc.append(metrics.roc_auc_score(test_y, aggregate_predictions))
+        auc_list.append(metrics.roc_auc_score(test_y, aggregate_predictions))
+        fpr, tpr, thresholds = roc_curve(test_y, aggregate_predictions)
+        mean_tpr += interp(mean_fpr, fpr, tpr)
+        mean_tpr[0] = 0.0
+
 
 
     tn, fp, fn, tp = cm / float(n_folds)
+
+    # Save ROC information
+    mean_tpr /= float(n_folds)
+    mean_tpr[-1] = 1.0
 
     # tp, fp, fn, tn
 
@@ -554,11 +569,12 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, use
     print "sensitivity: %s" % sensitivity
     print "specificity: %s" % specificity
     print "precision: %s" % precision
-    print "AUC: %s" % np.mean(auc)
+    print "AUC: %s" % np.mean(auc_list)
     # not the traditional F; we use spec instead
     # of precision!
     print "F2: %s" % f2measure 
     print "----"
+    return mean_fpr, mean_tpr
 
 
 def get_unique(rationales_d, worker_qualities):

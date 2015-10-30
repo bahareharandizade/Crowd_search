@@ -538,12 +538,13 @@ def run_AL_fp(model, al_method, batch_size,
             annotations, X_all, train_y, true_y, pmids, vectorizer, 
             worker_ids, use_grouped_data=False,
             use_worker_qualities=False, use_rationales=False,
-            n_jobs=1, init_set_path="init_set.pickle"):
+            n_jobs=1, init_set_path=None):
     
     n_lbls_so_far = 0 
 
     # bcw: one half seems reasonable
-    total_num_lbls_to_acquire = X_all.shape[0]/2.0
+    # michael: just trying 2/3
+    total_num_lbls_to_acquire = (2*X_all.shape[0])/3.0
 
 
     # maintain the learning curve -- right now,
@@ -558,10 +559,10 @@ def run_AL_fp(model, al_method, batch_size,
         cur_train_pmids = np.random.choice(pmids, num_init_labels, replace=False).tolist()
     else:
         if os.path.isfile(init_set_path):
-            cur_train_indices = cPickle.load(open(init_set_path, 'rb'))
+            cur_train_pmids = cPickle.load(open(init_set_path, 'rb'))
         else:
-            cur_train_indices = np.random.choice(pmids, num_init_labels, replace=False).tolist()
-            cPickle.dump(cur_train_indices, open(init_set_path, 'wb'))
+            cur_train_pmids = np.random.choice(pmids, num_init_labels, replace=False).tolist()
+            cPickle.dump(pmids, open(init_set_path, 'wb'))
 
     n_lbls = num_init_labels
     
@@ -605,8 +606,13 @@ def run_AL_fp(model, al_method, batch_size,
         # by some scalar for asymmetry
         sensitivity, specificity, precision, f2measure = ar.compute_measures(tp, fp, fn, tn)
         #auc = metrics.roc_auc_score(np.array(true_y)[~train_idx], aggregate_predictions)
+        prevalence = true_y.count(1)/len(pmids)
         cur_results_d = {"sensitivity":sensitivity, "specificity":specificity,
-                            "precision":precision, "F2":f2measure} #, "AUC":auc}
+                            "precision":precision, "F2":f2measure,
+                            "tp": tp, "fp": fp, "fn": fn, "tn": tn,
+                            "balanced_accuracy": (sensitivity+specificity)/2.0,
+                            "accuracy": (tp+tn)/(tp+fp+fn+tn)}
+        #"accuracy": (sensitivity*prevalence)+(specificity*(1-prevalence))
 
         learning_curve.append((n_lbls, cur_results_d))
 
@@ -670,7 +676,7 @@ def run_AL_fp(model, al_method, batch_size,
         
         ### may want to update accordingly if you change
         ### batchsize?
-        if (n_lbls % (5 * batch_size)) == 0: 
+        if (n_lbls % (10 * batch_size)) == 0:
             print "labeled %s instances so far" % n_lbls
             _pretty_print_d(cur_results_d)
             print "\n---"
@@ -942,7 +948,7 @@ def _fit_and_make_predictions(model, annotations, X_all, cur_train_indices, X_tr
                     print "fitting cf-recomposed model... "
                     m.fit(X_train, train_y)
                 else:
-                    m = get_SGD(loss="log", random_state=42, n_jobs=n_jobs)
+                    m = get_SGD(loss="log", n_jobs=n_jobs)
                     print "fitting cf-recomposed model... "
                     m.fit(X_train, train_y)
 
@@ -975,7 +981,7 @@ BCW notes (10/29/2015)
 def rationales_exp_all_active_fp(model="cf-stacked", use_worker_qualities=False, 
                             n_jobs=1, n_runs=5, use_grouped_data=False,
                             use_decomposed_training=False, use_rationales=False,
-                            al_method="uncertainty", batch_size=20, num_init_labels=400,
+                            al_method="uncertainty", batch_size=10, num_init_labels=400,
                             init_set_path=None):
     ##
     # basics: just load in the data + labels, vectorize
@@ -1008,9 +1014,9 @@ def rationales_exp_all_active_fp(model="cf-stacked", use_worker_qualities=False,
         cur_learning_curve = run_AL_fp(model, al_method, batch_size, 
             num_init_labels,
             annotations, X_all, train_y, true_y, pmids, vectorizer, 
-            train_worker_ids, use_grouped_data=False,
-            use_worker_qualities=False, use_rationales=False,
-            n_jobs=1, init_set_path=None)
+            train_worker_ids, use_grouped_data=use_grouped_data,
+            use_worker_qualities=use_worker_qualities, use_rationales=use_rationales,
+            n_jobs=n_jobs, init_set_path=init_set_path)
 
         learning_curves.append(cur_learning_curve)
 

@@ -611,7 +611,7 @@ def run_AL_fp(model, al_method, batch_size,
                             "precision":precision, "F2":f2measure,
                             "tp": tp, "fp": fp, "fn": fn, "tn": tn,
                             "balanced_accuracy": (sensitivity+specificity)/2.0,
-                            "accuracy": metrics.accuracy_score(training_lbls, aggregate_predictions)}
+                            "accuracy": metrics.accuracy_score(np.array(true_y)[~train_idx], aggregate_predictions)}
         #"accuracy": (sensitivity*prevalence)+(specificity*(1-prevalence))
 
         learning_curve.append((n_lbls, cur_results_d))

@@ -14,8 +14,6 @@ from nltk import word_tokenize
 import pandas as pd
 
 from scipy import interp
-import matplotlib.pyplot as plt
-
 import sklearn 
 from sklearn import metrics
 from sklearn.metrics import roc_curve, auc

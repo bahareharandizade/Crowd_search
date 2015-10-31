@@ -612,7 +612,14 @@ def run_AL_fp(model, al_method, batch_size,
             fn = 0
 
         if not np.array_equal(np.array(train_y)[train_idx], np.array(true_y)[~train_idx]):
-            tnc, fpc, fnc, tpc = annotatorPrecision(np.array(train_y)[train_idx], np.array(true_y)[train_idx])
+            tnc, fpc, fnc, tpc = metrics.confusion_matrix(np.array(train_y)[train_idx], np.array(true_y)[train_idx]).flatten()
+        else:
+            if((np.array(train_y)[train_idx])[0] == -1):
+                tnc = len(np.array(train_y)[train_idx])
+            else:
+                tpc = len(np.array(train_y)[train_idx])
+            fpc = 0
+            fnc = 0
         training_lbls = np.array(true_y)[train_idx]
         # assume labels are correct
         tp += training_lbls[training_lbls>0].shape[0]
@@ -630,6 +637,7 @@ def run_AL_fp(model, al_method, batch_size,
         cur_results_d = {"sensitivity":sensitivity, "specificity":specificity,
                             "precision":precision, "F2":f2measure,
                             "tp": tp, "fp": fp, "fn": fn, "tn": tn,
+                            "tpc": tpc, "fpc": fpc, "fnc": fnc, "tnc": tnc,
                             "balanced_accuracy": (sensitivity+specificity)/2.0,
                             "accuracy": metrics.accuracy_score(np.array(true_y)[~train_idx], aggregate_predictions),
                             "utility19": float(19*yield_val+(1-burden_val))/float(19+1)}

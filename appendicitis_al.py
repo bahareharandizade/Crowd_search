@@ -316,61 +316,39 @@ def cartesian(arrays, out=None):
 
 
 def get_all_train_and_test_X_and_y(annotations, pmids, X_all, lvl1_pmids, lvl2_pmids, 
-                use_decomposed_training=False, use_grouped_data=False):
+                use_decomposed_training=False, use_grouped_data=False, use_oracle=False):
     true_y = []  # to be used for eval
     train_y = [] # to be used for training
     worker_ids = []
     X = []
     for i, pmid in enumerate(pmids):
-        ###
-        #  for training (crowd labels)
-        ####
-        q_decisions_for_pmid = annotations[annotations['documentId'] == pmid]
-        for worker, question_answers in q_decisions_for_pmid.groupby("workerId"):
-            # calculate the 'effective' label given by this worker,
-            # as a function of their question decisions
-            if use_decomposed_training:
-                if use_grouped_data:
-                    raise NotImplementedError("Grouped data is not compatible with decomposed training")
-                q1 = question_answers[['q1']].values[0]
-                q2 = question_answers[['q2']].values[0]
-                q3 = question_answers[['q3']].values[0]
-                q4 = question_answers[['q4']].values[0][0]
-                q1a = -1 if (q1 == "No" or q1 == "\\N") else 1
-                q4a = -1 if (q4 == "No" or q4 == "\\N") else 1
-                q3a = -1 if (q3 == "No" or q3 == "\\N") else 1
-                q2a = -1 if (q2 == '\\N' or (q2 != 'NoInfo' and q2 < 10)) else 1
+        if use_oracle:
+            ###
+            #  for training (oracle)
+            ####
+            train_lbl = 1 if pmid in lvl1_pmids else -1
+            train_y.append(train_lbl)
+        else:
+            ###
+            #  for training (crowd labels)
+            ####
+            q_decisions_for_pmid = annotations[annotations['documentId'] == pmid]
+            for worker, question_answers in q_decisions_for_pmid.groupby("workerId"):
+                # calculate the 'effective' label given by this worker,
+                # as a function of their question decisions
+                if use_decomposed_training:
+                    if use_grouped_data:
+                        raise NotImplementedError("Grouped data is not compatible with decomposed training")
+                    q1 = question_answers[['q1']].values[0]
+                    q2 = question_answers[['q2']].values[0]
+                    q3 = question_answers[['q3']].values[0]
+                    q4 = question_answers[['q4']].values[0][0]
+                    q1a = -1 if (q1 == "No" or q1 == "\\N") else 1
+                    q4a = -1 if (q4 == "No" or q4 == "\\N") else 1
+                    q3a = -1 if (q3 == "No" or q3 == "\\N") else 1
+                    q2a = -1 if (q2 == '\\N' or (q2 != 'NoInfo' and q2 < 10)) else 1
 
-                # Extra interaction feature in the form of the final answer
-                question_answers_txt = question_answers[['q1', 'q3', 'q4']].values[0]
-                question_answer_num = question_answers[['q2']].values[0][0]
-                final_answer = -1 if ("No" in question_answers_txt or "\\N" in question_answers_txt or
-                                      (question_answer_num == '\\N' or
-                                       (question_answer_num != 'NoInfo' and question_answer_num < 10)))\
-                                  else 1
-
-                # Add answers and final answer interaction feature to training data.
-                train_y.append(q1a)
-                train_y.append(q2a)
-                train_y.append(q3a)
-                train_y.append(q4a)
-                train_y.append(final_answer)
-
-                # one per question
-                for _ in range(5):
-                    train_worker_ids.append(worker)
-
-                for _ in range(5):
-                    X.append(X_all[i])
-
-            else:
-                final_answer = None
-                if use_grouped_data:
-                    # bcw 10/29 -- this seems odd to me; why are we saying '1'
-                    # iff the answer to the first question is yes? @TODO revisit?
-                    question_answer = question_answers[['q1']].values[0]
-                    final_answer = -1 if ("No" in question_answer) else 1
-                else:
+                    # Extra interaction feature in the form of the final answer
                     question_answers_txt = question_answers[['q1', 'q3', 'q4']].values[0]
                     question_answer_num = question_answers[['q2']].values[0][0]
                     final_answer = -1 if ("No" in question_answers_txt or "\\N" in question_answers_txt or
@@ -378,8 +356,37 @@ def get_all_train_and_test_X_and_y(annotations, pmids, X_all, lvl1_pmids, lvl2_p
                                            (question_answer_num != 'NoInfo' and question_answer_num < 10)))\
                                       else 1
 
-                train_y.append(final_answer)
-                worker_ids.append(worker)
+                    # Add answers and final answer interaction feature to training data.
+                    train_y.append(q1a)
+                    train_y.append(q2a)
+                    train_y.append(q3a)
+                    train_y.append(q4a)
+                    train_y.append(final_answer)
+
+                    # one per question
+                    for _ in range(5):
+                        train_worker_ids.append(worker)
+
+                    for _ in range(5):
+                        X.append(X_all[i])
+
+                else:
+                    final_answer = None
+                    if use_grouped_data:
+                        # bcw 10/29 -- this seems odd to me; why are we saying '1'
+                        # iff the answer to the first question is yes? @TODO revisit?
+                        question_answer = question_answers[['q1']].values[0]
+                        final_answer = -1 if ("No" in question_answer) else 1
+                    else:
+                        question_answers_txt = question_answers[['q1', 'q3', 'q4']].values[0]
+                        question_answer_num = question_answers[['q2']].values[0][0]
+                        final_answer = -1 if ("No" in question_answers_txt or "\\N" in question_answers_txt or
+                                              (question_answer_num == '\\N' or
+                                               (question_answer_num != 'NoInfo' and question_answer_num < 10)))\
+                                          else 1
+
+                    train_y.append(final_answer)
+                    worker_ids.append(worker)
 
         ####
         # for evaluation; expert labels
@@ -990,7 +997,7 @@ def rationales_exp_all_active_fp(model="cf-stacked", use_worker_qualities=False,
                             n_jobs=1, n_runs=5, use_grouped_data=False,
                             use_decomposed_training=False, use_rationales=False,
                             al_method="uncertainty", batch_size=10, num_init_labels=400,
-                            init_set_path=None):
+                            init_set_path=None, use_oracle=False):
     ##
     # basics: just load in the data + labels, vectorize
     annotations = load_appendicitis_annotations(use_grouped_data)
@@ -1015,7 +1022,8 @@ def rationales_exp_all_active_fp(model="cf-stacked", use_worker_qualities=False,
     X, train_y, train_worker_ids, true_y = get_all_train_and_test_X_and_y(
             annotations, pmids, X_all, lvl2_pmids, lvl2_pmids, 
             use_grouped_data=use_grouped_data, 
-            use_decomposed_training=use_decomposed_training)
+            use_decomposed_training=use_decomposed_training,
+            use_oracle=use_oracle)
 
     for run in range(n_runs):    
         # now run active learning experiment over train/test split

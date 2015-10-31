@@ -377,14 +377,7 @@ def get_all_train_and_test_X_and_y(annotations, pmids, X_all, lvl1_pmids, lvl2_p
                                           (question_answer_num == '\\N' or
                                            (question_answer_num != 'NoInfo' and question_answer_num < 10)))\
                                       else 1
-
-                if use_oracle:
-                    ####
-                    # for evaluation; expert labels
-                    ####
-                    train_lbl = 1 if pmid in lvl1_pmids else -1
-                    train_y.append(train_lbl)
-                else:
+                if not use_oracle:
                     train_y.append(final_answer)
                 worker_ids.append(worker)
 
@@ -393,6 +386,13 @@ def get_all_train_and_test_X_and_y(annotations, pmids, X_all, lvl1_pmids, lvl2_p
         ####
         true_lbl = 1 if pmid in lvl1_pmids else -1
         true_y.append(true_lbl)
+
+        if use_oracle:
+            ####
+            # for training (oracle labels)
+            ####
+            train_lbl = 1 if pmid in lvl1_pmids else -1
+            train_y.append(train_lbl)
 
 
     return X, train_y, worker_ids, true_y

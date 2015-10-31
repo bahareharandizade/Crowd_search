@@ -11,6 +11,7 @@ import cPickle
 import os.path
 
 import numpy as np 
+import scipy as sp 
 
 from nltk import word_tokenize
 
@@ -319,17 +320,27 @@ def get_all_train_and_test_X_and_y(annotations, pmids, X_all, lvl1_pmids, lvl2_p
                 use_decomposed_training=False, use_grouped_data=False):
     true_y = []  # to be used for eval
     train_y = [] # to be used for training
+    train_pmids = [] # redundant labels
+
     worker_ids = []
-    X = []
+    X_crowd_train = [] # repeat instances, too
+
+    #pdb.set_trace()
     for i, pmid in enumerate(pmids):
         ###
         #  for training (crowd labels)
         ####
+        cur_crowd_lbls = [] # ie, for this pmid
         q_decisions_for_pmid = annotations[annotations['documentId'] == pmid]
         for worker, question_answers in q_decisions_for_pmid.groupby("workerId"):
             # calculate the 'effective' label given by this worker,
             # as a function of their question decisions
             if use_decomposed_training:
+                '''
+                bcw 10/31: @TODO really not sure how to handle the 'collapse'
+                                    label instances in this case!
+                                    michael amend how you see fit.
+                '''
                 if use_grouped_data:
                     raise NotImplementedError("Grouped data is not compatible with decomposed training")
                 q1 = question_answers[['q1']].values[0]
@@ -350,6 +361,9 @@ def get_all_train_and_test_X_and_y(annotations, pmids, X_all, lvl1_pmids, lvl2_p
                                   else 1
 
                 # Add answers and final answer interaction feature to training data.
+                # bcw: I dont really understand this; this looks like a label,
+                # not a feature?! why are we appending the 'final' answer to the label
+                # vector?
                 train_y.append(q1a)
                 train_y.append(q2a)
                 train_y.append(q3a)
@@ -359,9 +373,9 @@ def get_all_train_and_test_X_and_y(annotations, pmids, X_all, lvl1_pmids, lvl2_p
                 # one per question
                 for _ in range(5):
                     train_worker_ids.append(worker)
+                    X_crowd_train.append(X_all[i])
+                    train_pmids.append(pmid)
 
-                for _ in range(5):
-                    X.append(X_all[i])
 
             else:
                 final_answer = None
@@ -381,13 +395,21 @@ def get_all_train_and_test_X_and_y(annotations, pmids, X_all, lvl1_pmids, lvl2_p
                 train_y.append(final_answer)
                 worker_ids.append(worker)
 
+                train_pmids.append(pmid)
+                X_crowd_train.append(X_all[i])
+
+        #consensus_lbl = cur_crowd_lbls.count(1)/float(len(cur_crowd_lbls)) >= .5
+        #train_y_collapsed.append(consensus_lbl)
+    
+
         ####
         # for evaluation; expert labels
         ####
         true_lbl = 1 if pmid in lvl1_pmids else -1
         true_y.append(true_lbl)
         
-    return X, train_y, worker_ids, true_y
+    X_crowd_train = sp.sparse.vstack(X_crowd_train)
+    return X_crowd_train, train_y, train_pmids, worker_ids, true_y
 
 
 
@@ -533,9 +555,10 @@ def _get_mask(length, indices):
     return idx
 
 
+# X_crowd_train is for convienence; contains copyies for multiply labeled crowd instances.
 def run_AL_fp(model, al_method, batch_size, 
-            num_init_labels,
-            annotations, X_all, train_y, true_y, pmids, vectorizer, 
+            num_init_labels, annotations, X_all, X_crowd_train, 
+            train_y, train_pmids, true_y, pmids, vectorizer, 
             worker_ids, use_grouped_data=False,
             use_worker_qualities=False, use_rationales=False,
             n_jobs=1, init_set_path="init_set.pickle"):
@@ -565,7 +588,8 @@ def run_AL_fp(model, al_method, batch_size,
 
     n_lbls = num_init_labels
     
-
+    #X_crowd_train = np.array(X_crowd_train)
+    
     while n_lbls < total_num_lbls_to_acquire:
        
         # once everything is labele, train the model and make predictions
@@ -574,7 +598,15 @@ def run_AL_fp(model, al_method, batch_size,
 
         # get the indices into X for the selected PMIDs.
         cur_train_pmid_indices = [j for j in xrange(len(pmids)) if pmids[j] in cur_train_pmids]
+        # train_idx still used for indices into gold standard labels / vectors
         train_idx = _get_mask(X_all.shape[0], cur_train_pmid_indices)
+
+        #pdb.set_trace()
+
+        # bcw 10/31: additionally, we have to be tricky about the training data
+        # from the crowd -- because these are collected redundantly
+        crowd_train_pmid_indices = [j for j in xrange(len(train_pmids)) if train_pmids[j] in cur_train_pmids]
+        crowd_train_idx = _get_mask(X_crowd_train.shape[0], crowd_train_pmid_indices)
 
         # bcw 10/29: NOTE that the None here is an argument no 
         # no longer used by the _fit_and_make_predictions routine!
@@ -584,9 +616,9 @@ def run_AL_fp(model, al_method, batch_size,
         #train_worker_ids = [worker_ids[j] for j in pmid_indices]
         #pdb.set_trace()
         aggregate_predictions, trained_model = _fit_and_make_predictions(
-                    model, annotations, X_all, None, X_all[train_idx],
-                    np.array(train_y)[train_idx], X_all[~train_idx], pmids, cur_train_pmids, 
-                    vectorizer, np.array(worker_ids)[train_idx],
+                    model, annotations, X_all, None, X_crowd_train[crowd_train_idx],
+                    np.array(train_y)[crowd_train_idx], X_all[~train_idx], pmids, cur_train_pmids, 
+                    vectorizer, np.array(worker_ids)[crowd_train_idx],
                     use_grouped_data=use_grouped_data, use_worker_qualities=use_worker_qualities,
                     use_rationales=use_rationales, n_jobs=n_jobs, return_model=True)
 
@@ -998,7 +1030,7 @@ def rationales_exp_all_active_fp(model="cf-stacked", use_worker_qualities=False,
     #        model, lvl1_pmids, lvl2_pmids, use_grouped_data=use_grouped_data,
     #        use_decomposed_training=use_decomposed_training)
 
-    X, train_y, train_worker_ids, true_y = get_all_train_and_test_X_and_y(
+    X_crowd_train, train_y, train_pmids, train_worker_ids, true_y = get_all_train_and_test_X_and_y(
             annotations, pmids, X_all, lvl2_pmids, lvl2_pmids, 
             use_grouped_data=use_grouped_data, 
             use_decomposed_training=use_decomposed_training)
@@ -1007,7 +1039,7 @@ def rationales_exp_all_active_fp(model="cf-stacked", use_worker_qualities=False,
         # now run active learning experiment over train/test split
         cur_learning_curve = run_AL_fp(model, al_method, batch_size, 
             num_init_labels,
-            annotations, X_all, train_y, true_y, pmids, vectorizer, 
+            annotations, X_all, X_crowd_train, train_y, train_pmids, true_y, pmids, vectorizer, 
             train_worker_ids, use_grouped_data=False,
             use_worker_qualities=False, use_rationales=False,
             n_jobs=1, init_set_path=None)

@@ -317,7 +317,7 @@ def cartesian(arrays, out=None):
 
 
 def get_all_train_and_test_X_and_y(annotations, pmids, X_all, lvl1_pmids, lvl2_pmids, 
-                use_decomposed_training=False, use_grouped_data=False):
+                use_decomposed_training=False, use_grouped_data=False, use_oracle=False):
     true_y = []  # to be used for eval
     train_y = [] # to be used for training
     train_pmids = [] # redundant labels
@@ -391,8 +391,8 @@ def get_all_train_and_test_X_and_y(annotations, pmids, X_all, lvl1_pmids, lvl2_p
                                           (question_answer_num == '\\N' or
                                            (question_answer_num != 'NoInfo' and question_answer_num < 10)))\
                                       else 1
-
-                train_y.append(final_answer)
+                if not use_oracle:
+                    train_y.append(final_answer)
                 worker_ids.append(worker)
 
                 train_pmids.append(pmid)
@@ -407,9 +407,23 @@ def get_all_train_and_test_X_and_y(annotations, pmids, X_all, lvl1_pmids, lvl2_p
         ####
         true_lbl = 1 if pmid in lvl1_pmids else -1
         true_y.append(true_lbl)
-        
+
+        '''
+        # bcw: was unclear on what this is
+        if use_oracle:
+            ####
+            # for training (oracle labels)
+            ####
+            train_lbl = 1 if pmid in lvl1_pmids else -1
+            train_y.append(train_lbl)
+        '''
+
     X_crowd_train = sp.sparse.vstack(X_crowd_train)
     return X_crowd_train, train_y, train_pmids, worker_ids, true_y
+
+
+
+
 
 
 
@@ -556,17 +570,19 @@ def _get_mask(length, indices):
 
 
 # X_crowd_train is for convienence; contains copyies for multiply labeled crowd instances.
+
 def run_AL_fp(model, al_method, batch_size, 
             num_init_labels, annotations, X_all, X_crowd_train, 
             train_y, train_pmids, true_y, pmids, vectorizer, 
             worker_ids, use_grouped_data=False,
             use_worker_qualities=False, use_rationales=False,
-            n_jobs=1, init_set_path="init_set.pickle"):
+            n_jobs=1, init_set_path=None):
     
     n_lbls_so_far = 0 
 
     # bcw: one half seems reasonable
-    total_num_lbls_to_acquire = X_all.shape[0]/2.0
+    # michael: just trying 2/3
+    total_num_lbls_to_acquire = (2*X_all.shape[0])/3.0
 
 
     # maintain the learning curve -- right now,
@@ -577,14 +593,10 @@ def run_AL_fp(model, al_method, batch_size,
     # to have labeled -- may consider explicitly 
     # starting wtih a balanced sample!
     cur_train_pmids = []
-    if init_set_path is None:
+    if init_set is None:
         cur_train_pmids = np.random.choice(pmids, num_init_labels, replace=False).tolist()
     else:
-        if os.path.isfile(init_set_path):
-            cur_train_indices = cPickle.load(open(init_set_path, 'rb'))
-        else:
-            cur_train_indices = np.random.choice(pmids, num_init_labels, replace=False).tolist()
-            cPickle.dump(cur_train_indices, open(init_set_path, 'wb'))
+        cur_train_pmids = init_set
 
     n_lbls = num_init_labels
     
@@ -625,7 +637,25 @@ def run_AL_fp(model, al_method, batch_size,
         # how are we doing so far? 
         # for future ref, we record the num lbls so 
         # far and the confusion matrix.
-        tn, fp, fn, tp = metrics.confusion_matrix(np.array(true_y)[~train_idx], aggregate_predictions).flatten()
+        if not np.array_equal(np.array(true_y)[~train_idx], aggregate_predictions):
+            tn, fp, fn, tp = metrics.confusion_matrix(np.array(true_y)[~train_idx], aggregate_predictions).flatten()
+        else:
+            if(aggregate_predictions[0] == -1):
+                tn = len(aggregate_predictions)
+            else:
+                tp = len(aggregate_predictions)
+            fp = 0
+            fn = 0
+
+        if not np.array_equal(np.array(train_y)[train_idx], np.array(true_y)[~train_idx]):
+            tnc, fpc, fnc, tpc = metrics.confusion_matrix(np.array(true_y)[train_idx], np.array(train_y)[train_idx]).flatten()
+        else:
+            if((np.array(train_y)[train_idx])[0] == -1):
+                tnc = len(np.array(train_y)[train_idx])
+            else:
+                tpc = len(np.array(train_y)[train_idx])
+            fpc = 0
+            fnc = 0
         training_lbls = np.array(true_y)[train_idx]
         # assume labels are correct
         tp += training_lbls[training_lbls>0].shape[0]
@@ -636,9 +666,18 @@ def run_AL_fp(model, al_method, batch_size,
         # using total tn, fp, fn and fp counts is sensible, multipled through
         # by some scalar for asymmetry
         sensitivity, specificity, precision, f2measure = ar.compute_measures(tp, fp, fn, tn)
+
         #auc = metrics.roc_auc_score(np.array(true_y)[~train_idx], aggregate_predictions)
+        yield_val = float(tpc+tp)/float(tpc+tp+fn)
+        burden_val = float(tpc+tnc+tp+fp)/float(len(pmids))
         cur_results_d = {"sensitivity":sensitivity, "specificity":specificity,
-                            "precision":precision, "F2":f2measure} #, "AUC":auc}
+                            "precision":precision, "F2":f2measure,
+                            "tp": tp, "fp": fp, "fn": fn, "tn": tn,
+                            "tpc": tpc, "fpc": fpc, "fnc": fnc, "tnc": tnc,
+                            "balanced_accuracy": (sensitivity+specificity)/2.0,
+                            "accuracy": metrics.accuracy_score(np.array(true_y)[~train_idx], aggregate_predictions),
+                            "utility19": float(19*yield_val+(1-burden_val))/float(19+1)}
+        #"accuracy": (sensitivity*prevalence)+(specificity*(1-prevalence))
 
         learning_curve.append((n_lbls, cur_results_d))
 
@@ -702,7 +741,7 @@ def run_AL_fp(model, al_method, batch_size,
         
         ### may want to update accordingly if you change
         ### batchsize?
-        if (n_lbls % (5 * batch_size)) == 0: 
+        if (n_lbls % (10 * batch_size)) == 0:
             print "labeled %s instances so far" % n_lbls
             _pretty_print_d(cur_results_d)
             print "\n---"
@@ -968,7 +1007,7 @@ def _fit_and_make_predictions(model, annotations, X_all, cur_train_indices, X_tr
                 aggregate_predictions = m.predict(X_test)
             else:
                 if use_worker_qualities:
-                    instance_quality_d = estimate_quality_instance_level(annotations, train_pmids, use_grouped_data=use_grouped_data)
+                    instance_quality_d = estimate_quality_instance_level(annotations, pmids, use_grouped_data=use_grouped_data)
                     worker_weights = [instance_quality_d[w] for w in train_worker_ids]
                     m = get_SGD(loss="log", random_state=42, fit_params={"sample_weight":worker_weights}, n_jobs=n_jobs)
                     print "fitting cf-recomposed model... "
@@ -1007,8 +1046,8 @@ BCW notes (10/29/2015)
 def rationales_exp_all_active_fp(model="cf-stacked", use_worker_qualities=False, 
                             n_jobs=1, n_runs=5, use_grouped_data=False,
                             use_decomposed_training=False, use_rationales=False,
-                            al_method="uncertainty", batch_size=20, num_init_labels=400,
-                            init_set_path=None):
+                            al_method="uncertainty", batch_size=10, num_init_labels=400,
+                            init_set_path=None, run_nr=None, use_oracle=False):
     ##
     # basics: just load in the data + labels, vectorize
     annotations = load_appendicitis_annotations(use_grouped_data)
@@ -1033,16 +1072,37 @@ def rationales_exp_all_active_fp(model="cf-stacked", use_worker_qualities=False,
     X_crowd_train, train_y, train_pmids, train_worker_ids, true_y = get_all_train_and_test_X_and_y(
             annotations, pmids, X_all, lvl2_pmids, lvl2_pmids, 
             use_grouped_data=use_grouped_data, 
-            use_decomposed_training=use_decomposed_training)
+            use_decomposed_training=use_decomposed_training,
+            use_oracle=use_oracle)
 
-    for run in range(n_runs):    
+    pmid_sets = None
+    if init_set_path is not None:
+        if os.path.isfile(init_set_path):
+            pmid_sets = cPickle.load(open(init_set_path, 'rb'))
+        else:
+            pmid_sets = {}
+            for i in xrange(0,n_runs):
+                run_pmids = np.random.choice(pmids, num_init_labels, replace=False).tolist()
+                pmid_sets[i] = run_pmids
+            cPickle.dump(pmid_sets, open(init_set_path, 'wb'))
+
+    for run in range(n_runs):
+        if pmid_sets is None:
+            init_set = None
+        else:
+            if run_nr is None:
+                init_set = pmid_sets[run]
+            else:
+                init_set = pmid_sets[run_nr-1]
         # now run active learning experiment over train/test split
         cur_learning_curve = run_AL_fp(model, al_method, batch_size, 
-            num_init_labels,
-            annotations, X_all, X_crowd_train, train_y, train_pmids, true_y, pmids, vectorizer, 
-            train_worker_ids, use_grouped_data=False,
-            use_worker_qualities=False, use_rationales=False,
-            n_jobs=1, init_set_path=None)
+            num_init_labels, annotations, X_all, X_crowd_train,
+            train_y, train_pmids, true_y, pmids, vectorizer, 
+            train_worker_ids, use_grouped_data=use_grouped_data,
+            use_worker_qualities=use_worker_qualities, use_rationales=use_rationales,
+            n_jobs=n_jobs, init_set_path=init_set)
+
+
 
         learning_curves.append(cur_learning_curve)
 

@@ -621,12 +621,14 @@ def run_AL_fp(model, al_method, batch_size,
         # by some scalar for asymmetry
         sensitivity, specificity, precision, f2measure = ar.compute_measures(tp, fp, fn, tn)
         #auc = metrics.roc_auc_score(np.array(true_y)[~train_idx], aggregate_predictions)
-        prevalence = true_y.count(1)/len(pmids)
+        yield_val = float(tp)/float(tp+fn+tp)
+        burden_val = float(tp+tn+fp)/float(len(pmids))
         cur_results_d = {"sensitivity":sensitivity, "specificity":specificity,
                             "precision":precision, "F2":f2measure,
                             "tp": tp, "fp": fp, "fn": fn, "tn": tn,
                             "balanced_accuracy": (sensitivity+specificity)/2.0,
-                            "accuracy": metrics.accuracy_score(np.array(true_y)[~train_idx], aggregate_predictions)}
+                            "accuracy": metrics.accuracy_score(np.array(true_y)[~train_idx], aggregate_predictions),
+                            "utility_19": float(19*yield_val+(1-burden_val))/float(19+1)}
         #"accuracy": (sensitivity*prevalence)+(specificity*(1-prevalence))
 
         learning_curve.append((n_lbls, cur_results_d))

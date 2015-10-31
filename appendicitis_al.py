@@ -1010,7 +1010,7 @@ def rationales_exp_all_active_fp(model="cf-stacked", use_worker_qualities=False,
                             init_set_path=None, use_oracle=False):
     ##
     # basics: just load in the data + labels, vectorize
-    annotations = load_appendicit_fpis_annotations(use_grouped_data)
+    annotations = load_appendicitis_annotations(use_grouped_data)
     lvl1_pmids, lvl2_pmids = read_lbls()
 
     # Data

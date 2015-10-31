@@ -1053,7 +1053,7 @@ def rationales_exp_all_active_fp(model="cf-stacked", use_worker_qualities=False,
             if run_nr is None:
                 init_set = pmid_sets[run]
             else:
-                init_set = pmid_sets[run_nr]
+                init_set = pmid_sets[run_nr-1]
         # now run active learning experiment over train/test split
         cur_learning_curve = run_AL_fp(model, al_method, batch_size, 
             num_init_labels,

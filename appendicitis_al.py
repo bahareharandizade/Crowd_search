@@ -1046,14 +1046,18 @@ def rationales_exp_all_active_fp(model="cf-stacked", use_worker_qualities=False,
                 pmid_sets[i] = run_pmids
             cPickle.dump(pmid_sets, open(init_set_path, 'wb'))
 
-    for run in range(n_runs):    
+    for run in range(n_runs):
+        if pmid_sets is None:
+            init_set = None
+        else:
+            init_set = pmid_sets[run]
         # now run active learning experiment over train/test split
         cur_learning_curve = run_AL_fp(model, al_method, batch_size, 
             num_init_labels,
             annotations, X_all, train_y, true_y, pmids, vectorizer, 
             train_worker_ids, use_grouped_data=use_grouped_data,
             use_worker_qualities=use_worker_qualities, use_rationales=use_rationales,
-            n_jobs=n_jobs, init_set=pmid_sets[run])
+            n_jobs=n_jobs, init_set=init_set)
 
         learning_curves.append(cur_learning_curve)
 

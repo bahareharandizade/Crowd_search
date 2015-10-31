@@ -1007,7 +1007,7 @@ def rationales_exp_all_active_fp(model="cf-stacked", use_worker_qualities=False,
                             n_jobs=1, n_runs=5, use_grouped_data=False,
                             use_decomposed_training=False, use_rationales=False,
                             al_method="uncertainty", batch_size=10, num_init_labels=400,
-                            init_set_path=None, use_oracle=False):
+                            init_set_path=None, run_nr=None, use_oracle=False):
     ##
     # basics: just load in the data + labels, vectorize
     annotations = load_appendicitis_annotations(use_grouped_data)
@@ -1050,7 +1050,10 @@ def rationales_exp_all_active_fp(model="cf-stacked", use_worker_qualities=False,
         if pmid_sets is None:
             init_set = None
         else:
-            init_set = pmid_sets[run]
+            if run_nr is None:
+                init_set = pmid_sets[run]
+            else:
+                init_set = pmid_sets[run_nr]
         # now run active learning experiment over train/test split
         cur_learning_curve = run_AL_fp(model, al_method, batch_size, 
             num_init_labels,

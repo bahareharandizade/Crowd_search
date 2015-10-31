@@ -621,7 +621,7 @@ def run_AL_fp(model, al_method, batch_size,
         # by some scalar for asymmetry
         sensitivity, specificity, precision, f2measure = ar.compute_measures(tp, fp, fn, tn)
         #auc = metrics.roc_auc_score(np.array(true_y)[~train_idx], aggregate_predictions)
-        yield_val = float(tp)/float(tp+fn+tp)
+        yield_val = float(tp)/float(tp+fn)
         burden_val = float(tp+tn+fp)/float(len(pmids))
         cur_results_d = {"sensitivity":sensitivity, "specificity":specificity,
                             "precision":precision, "F2":f2measure,

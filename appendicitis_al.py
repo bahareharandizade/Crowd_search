@@ -612,7 +612,7 @@ def run_AL_fp(model, al_method, batch_size,
             fn = 0
 
         if not np.array_equal(np.array(train_y)[train_idx], np.array(true_y)[~train_idx]):
-            tnc, fpc, fnc, tpc = metrics.confusion_matrix(np.array(train_y)[train_idx], np.array(true_y)[train_idx]).flatten()
+            tnc, fpc, fnc, tpc = metrics.confusion_matrix(np.array(true_y)[train_idx], np.array(train_y)[train_idx]).flatten()
         else:
             if((np.array(train_y)[train_idx])[0] == -1):
                 tnc = len(np.array(train_y)[train_idx])

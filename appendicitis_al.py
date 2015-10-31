@@ -545,7 +545,7 @@ def run_AL_fp(model, al_method, batch_size,
             annotations, X_all, train_y, true_y, pmids, vectorizer, 
             worker_ids, use_grouped_data=False,
             use_worker_qualities=False, use_rationales=False,
-            n_jobs=1, init_set_path=None):
+            n_jobs=1, init_set=None):
     
     n_lbls_so_far = 0 
 
@@ -562,14 +562,10 @@ def run_AL_fp(model, al_method, batch_size,
     # to have labeled -- may consider explicitly 
     # starting wtih a balanced sample!
     cur_train_pmids = []
-    if init_set_path is None:
+    if init_set is None:
         cur_train_pmids = np.random.choice(pmids, num_init_labels, replace=False).tolist()
     else:
-        if os.path.isfile(init_set_path):
-            cur_train_pmids = cPickle.load(open(init_set_path, 'rb'))
-        else:
-            cur_train_pmids = np.random.choice(pmids, num_init_labels, replace=False).tolist()
-            cPickle.dump(pmids, open(init_set_path, 'wb'))
+        cur_train_pmids = init_set
 
     n_lbls = num_init_labels
     
@@ -1014,7 +1010,7 @@ def rationales_exp_all_active_fp(model="cf-stacked", use_worker_qualities=False,
                             init_set_path=None, use_oracle=False):
     ##
     # basics: just load in the data + labels, vectorize
-    annotations = load_appendicitis_annotations(use_grouped_data)
+    annotations = load_appendicit_fpis_annotations(use_grouped_data)
     lvl1_pmids, lvl2_pmids = read_lbls()
 
     # Data
@@ -1039,6 +1035,17 @@ def rationales_exp_all_active_fp(model="cf-stacked", use_worker_qualities=False,
             use_decomposed_training=use_decomposed_training,
             use_oracle=use_oracle)
 
+    pmid_sets = none
+    if init_set_path is not None:
+        if os.path.isfile(init_set_path):
+            pmid_sets = cPickle.load(open(init_set_path, 'rb'))
+        else:
+            pmid_sets = {}
+            for i in xrange(0,n_runs):
+                run_pmids = np.random.choice(pmids, num_init_labels, replace=False).tolist()
+                pmid_sets[i] = run_pmids
+            cPickle.dump(pmid_sets, open(init_set_path, 'wb'))
+
     for run in range(n_runs):    
         # now run active learning experiment over train/test split
         cur_learning_curve = run_AL_fp(model, al_method, batch_size, 
@@ -1046,7 +1053,7 @@ def rationales_exp_all_active_fp(model="cf-stacked", use_worker_qualities=False,
             annotations, X_all, train_y, true_y, pmids, vectorizer, 
             train_worker_ids, use_grouped_data=use_grouped_data,
             use_worker_qualities=use_worker_qualities, use_rationales=use_rationales,
-            n_jobs=n_jobs, init_set_path=init_set_path)
+            n_jobs=n_jobs, init_set=pmid_sets[run])
 
         learning_curves.append(cur_learning_curve)
 

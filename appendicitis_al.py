@@ -1035,7 +1035,7 @@ def rationales_exp_all_active_fp(model="cf-stacked", use_worker_qualities=False,
             use_decomposed_training=use_decomposed_training,
             use_oracle=use_oracle)
 
-    pmid_sets = none
+    pmid_sets = None
     if init_set_path is not None:
         if os.path.isfile(init_set_path):
             pmid_sets = cPickle.load(open(init_set_path, 'rb'))

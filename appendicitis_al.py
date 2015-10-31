@@ -393,7 +393,8 @@ def get_all_train_and_test_X_and_y(annotations, pmids, X_all, lvl1_pmids, lvl2_p
         ####
         true_lbl = 1 if pmid in lvl1_pmids else -1
         true_y.append(true_lbl)
-        
+
+
     return X, train_y, worker_ids, true_y
 
 
@@ -539,7 +540,6 @@ def _get_mask(length, indices):
     idx[indices] = True 
     return idx
 
-
 def run_AL_fp(model, al_method, batch_size, 
             num_init_labels,
             annotations, X_all, train_y, true_y, pmids, vectorizer, 
@@ -610,6 +610,9 @@ def run_AL_fp(model, al_method, batch_size,
                 tp = len(aggregate_predictions)
             fp = 0
             fn = 0
+
+        if not np.array_equal(np.array(train_y)[train_idx], np.array(true_y)[~train_idx]):
+            tnc, fpc, fnc, tpc = annotatorPrecision(np.array(train_y)[train_idx], np.array(true_y)[train_idx])
         training_lbls = np.array(true_y)[train_idx]
         # assume labels are correct
         tp += training_lbls[training_lbls>0].shape[0]
@@ -620,15 +623,16 @@ def run_AL_fp(model, al_method, batch_size,
         # using total tn, fp, fn and fp counts is sensible, multipled through
         # by some scalar for asymmetry
         sensitivity, specificity, precision, f2measure = ar.compute_measures(tp, fp, fn, tn)
+
         #auc = metrics.roc_auc_score(np.array(true_y)[~train_idx], aggregate_predictions)
-        yield_val = float(tp)/float(tp+fn)
-        burden_val = float(tp+tn+fp)/float(len(pmids))
+        yield_val = float(tpc+tp)/float(tpc+tp+fn)
+        burden_val = float(tpc+tnc+tp+fp)/float(len(pmids))
         cur_results_d = {"sensitivity":sensitivity, "specificity":specificity,
                             "precision":precision, "F2":f2measure,
                             "tp": tp, "fp": fp, "fn": fn, "tn": tn,
                             "balanced_accuracy": (sensitivity+specificity)/2.0,
                             "accuracy": metrics.accuracy_score(np.array(true_y)[~train_idx], aggregate_predictions),
-                            "utility_19": float(19*yield_val+(1-burden_val))/float(19+1)}
+                            "utility19": float(19*yield_val+(1-burden_val))/float(19+1)}
         #"accuracy": (sensitivity*prevalence)+(specificity*(1-prevalence))
 
         learning_curve.append((n_lbls, cur_results_d))

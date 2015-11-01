@@ -418,7 +418,9 @@ def get_all_train_and_test_X_and_y(annotations, pmids, X_all, lvl1_pmids, lvl2_p
             train_y.append(train_lbl)
         '''
 
-    X_crowd_train = sp.sparse.vstack(X_crowd_train)
+    #pdb.set_trace()
+    X_crowd_train = sp.sparse.vstack(X_crowd_train, format='csr')
+    #pdb.set_trace()
     return X_crowd_train, train_y, train_pmids, worker_ids, true_y
 
 
@@ -569,6 +571,88 @@ def _get_mask(length, indices):
     return idx
 
 
+def count_occurances(answers, value):
+    count = 0
+    for answer in answers:
+        if answer==value:
+            count = count + 1
+    return count
+
+def count_numeric_include(answers):
+    count = 0
+    for answer in answers:
+        if answer == 'NoInfo' or answer >= 10:
+            count = count + 1
+    return count
+
+def generate_majority_labels(cur_train_pmids, annotations):
+    crowd_labels = []
+    for pmid in cur_train_pmids:
+        indices = np.where(annotations['documentId']==pmid)
+        indices_mask = _get_mask(len(annotations), indices)
+        q1 = annotations[indices_mask]['q1'].tolist()
+        if len(q1)>0:
+            q1_lbl = 1 if (count_occurances(q1, 'Yes')+count_occurances(q1, 'Yes'))/float(len(q1)) >= 0.5 else -1
+        else:
+            q1_lbl = 0
+        q2 = annotations[indices_mask]['q2'].tolist()
+        if len(q2)>0:
+            q2_lbl = 1 if count_numeric_include(q2)/float(len(q2)) >= 0.5 else -1
+        else:
+            q2_lbl = 0
+        q3 = annotations[indices_mask]['q3'].tolist()
+        if len(q3)>0:
+            q3_lbl = 1 if (count_occurances(q3, 'Yes')+count_occurances(q3, 'Yes'))/float(len(q3)) >= 0.5 else -1
+        else:
+            q3_lbl = 0
+        q4 = annotations[indices_mask]['q4'].tolist()
+        if len(q4)>0:
+            q4_lbl = 1 if (count_occurances(q4, 'Yes')+count_occurances(q4, 'Yes'))/float(len(q4)) >= 0.5 else -1
+        else:
+            q4_lbl = 0
+
+        # Determine final label using majority
+        if (q1_lbl+q2_lbl+q3_lbl+q4_lbl) >= 2:
+            crowd_labels.append(1)
+        else:
+            crowd_labels.append(-1)
+    return np.array(crowd_labels)
+
+def generate_consensus_labels(cur_train_pmids, annotations):
+    crowd_labels = []
+    for pmid in cur_train_pmids:
+        indices = np.where(annotations['documentId']==pmid)
+        indices_mask = _get_mask(len(annotations), indices)
+        q1 = annotations[indices_mask]['q1'].tolist()
+        if len(q1)>0:
+            q1_lbl = 1 if (count_occurances(q1, 'Yes')+count_occurances(q1, 'Yes'))/float(len(q1)) >= 0.5 else -1
+        else:
+            q1_lbl = 0
+        q2 = annotations[indices_mask]['q2'].tolist()
+        if len(q2)>0:
+            q2_lbl = 1 if count_numeric_include(q2)/float(len(q2)) >= 0.5 else -1
+        else:
+            q2_lbl = 0
+        q3 = annotations[indices_mask]['q3'].tolist()
+        if len(q3)>0:
+            q3_lbl = 1 if (count_occurances(q3, 'Yes')+count_occurances(q3, 'Yes'))/float(len(q3)) >= 0.5 else -1
+        else:
+            q3_lbl = 0
+        q4 = annotations[indices_mask]['q4'].tolist()
+        if len(q4)>0:
+            q4_lbl = 1 if (count_occurances(q4, 'Yes')+count_occurances(q4, 'Yes'))/float(len(q4)) >= 0.5 else -1
+        else:
+            q4_lbl = 0
+
+        # Determine final label using consensus
+        if (q1_lbl+q2_lbl+q3_lbl+q4_lbl)==4:
+            crowd_labels.append(1)
+        else:
+            crowd_labels.append(-1)
+    return np.array(crowd_labels)
+
+
+
 # X_crowd_train is for convienence; contains copyies for multiply labeled crowd instances.
 
 def run_AL_fp(model, al_method, batch_size, 
@@ -576,7 +660,7 @@ def run_AL_fp(model, al_method, batch_size,
             train_y, train_pmids, true_y, pmids, vectorizer, 
             worker_ids, use_grouped_data=False,
             use_worker_qualities=False, use_rationales=False,
-            n_jobs=1, init_set_path=None):
+            n_jobs=1, init_set=None, crowd_label_metric='Consensus'):
     
     n_lbls_so_far = 0 
 
@@ -619,6 +703,7 @@ def run_AL_fp(model, al_method, batch_size,
         # from the crowd -- because these are collected redundantly
         crowd_train_pmid_indices = [j for j in xrange(len(train_pmids)) if train_pmids[j] in cur_train_pmids]
         crowd_train_idx = _get_mask(X_crowd_train.shape[0], crowd_train_pmid_indices)
+        #pdb.set_trace()
 
         # bcw 10/29: NOTE that the None here is an argument no 
         # no longer used by the _fit_and_make_predictions routine!
@@ -633,33 +718,39 @@ def run_AL_fp(model, al_method, batch_size,
                     vectorizer, np.array(worker_ids)[crowd_train_idx],
                     use_grouped_data=use_grouped_data, use_worker_qualities=use_worker_qualities,
                     use_rationales=use_rationales, n_jobs=n_jobs, return_model=True)
-
+        #pdb.set_trace()
         # how are we doing so far? 
         # for future ref, we record the num lbls so 
         # far and the confusion matrix.
         if not np.array_equal(np.array(true_y)[~train_idx], aggregate_predictions):
             tn, fp, fn, tp = metrics.confusion_matrix(np.array(true_y)[~train_idx], aggregate_predictions).flatten()
         else:
-            if(aggregate_predictions[0] == -1):
+            if aggregate_predictions[0] == -1:
                 tn = len(aggregate_predictions)
             else:
                 tp = len(aggregate_predictions)
             fp = 0
             fn = 0
+        #pdb.set_trace()
+        if crowd_label_metric == 'Majority':
+            crowd_labels = generate_majority_labels(cur_train_pmids, annotations)
+        elif crowd_label_metric == 'Consensus':
+            crowd_labels = generate_consensus_labels(cur_train_pmids, annotations)
 
-        if not np.array_equal(np.array(train_y)[train_idx], np.array(true_y)[~train_idx]):
-            tnc, fpc, fnc, tpc = metrics.confusion_matrix(np.array(true_y)[train_idx], np.array(train_y)[train_idx]).flatten()
+        if not np.array_equal(crowd_labels, np.array(true_y)[train_idx]):
+            tnc, fpc, fnc, tpc = metrics.confusion_matrix(np.array(true_y)[train_idx], crowd_labels).flatten()
         else:
-            if((np.array(train_y)[train_idx])[0] == -1):
+            if crowd_labels[0] == -1:
                 tnc = len(np.array(train_y)[train_idx])
             else:
                 tpc = len(np.array(train_y)[train_idx])
             fpc = 0
             fnc = 0
+        #pdb.set_trace()
         training_lbls = np.array(true_y)[train_idx]
         # assume labels are correct
-        tp += training_lbls[training_lbls>0].shape[0]
-        tn += training_lbls[training_lbls<=0].shape[0]
+        #tp += training_lbls[training_lbls>0].shape[0]
+        #tn += training_lbls[training_lbls<=0].shape[0]
 
         ###
         # bcw 10/29 TODO TODO TODO probably want to re-visit metrics. i think 
@@ -670,13 +761,18 @@ def run_AL_fp(model, al_method, batch_size,
         #auc = metrics.roc_auc_score(np.array(true_y)[~train_idx], aggregate_predictions)
         yield_val = float(tpc+tp)/float(tpc+tp+fn)
         burden_val = float(tpc+tnc+tp+fp)/float(len(pmids))
+        yieldc_val = float(tpc+tp)/float(tpc+fnc+tp+fn)
+        burdenc_val = float(fpc+tp+fp)/float(len(pmids))
         cur_results_d = {"sensitivity":sensitivity, "specificity":specificity,
                             "precision":precision, "F2":f2measure,
                             "tp": tp, "fp": fp, "fn": fn, "tn": tn,
                             "tpc": tpc, "fpc": fpc, "fnc": fnc, "tnc": tnc,
                             "balanced_accuracy": (sensitivity+specificity)/2.0,
                             "accuracy": metrics.accuracy_score(np.array(true_y)[~train_idx], aggregate_predictions),
-                            "utility19": float(19*yield_val+(1-burden_val))/float(19+1)}
+                            "utility19": float(19*yield_val+(1-burden_val))/float(19+1),
+                            "regret95": 1-(0.95*yield_val+(0.05)*(1-burden_val)),
+                            "crowdregret95": 1-(0.95*yieldc_val+(0.05)*(1-burdenc_val)),
+                            "crowdregret50": 1-(0.5*yieldc_val+(0.5)*(1-burdenc_val))}
         #"accuracy": (sensitivity*prevalence)+(specificity*(1-prevalence))
 
         learning_curve.append((n_lbls, cur_results_d))
@@ -1047,7 +1143,7 @@ def rationales_exp_all_active_fp(model="cf-stacked", use_worker_qualities=False,
                             n_jobs=1, n_runs=5, use_grouped_data=False,
                             use_decomposed_training=False, use_rationales=False,
                             al_method="uncertainty", batch_size=10, num_init_labels=400,
-                            init_set_path=None, run_nr=None, use_oracle=False):
+                            init_set_path=None, run_nr=None, use_oracle=False, crowd_label_metric='Consensus'):
     ##
     # basics: just load in the data + labels, vectorize
     annotations = load_appendicitis_annotations(use_grouped_data)
@@ -1087,9 +1183,8 @@ def rationales_exp_all_active_fp(model="cf-stacked", use_worker_qualities=False,
             cPickle.dump(pmid_sets, open(init_set_path, 'wb'))
 
     for run in range(n_runs):
-        if pmid_sets is None:
-            init_set = None
-        else:
+        init_set = None
+        if pmid_sets is not None:
             if run_nr is None:
                 init_set = pmid_sets[run]
             else:
@@ -1100,7 +1195,7 @@ def rationales_exp_all_active_fp(model="cf-stacked", use_worker_qualities=False,
             train_y, train_pmids, true_y, pmids, vectorizer, 
             train_worker_ids, use_grouped_data=use_grouped_data,
             use_worker_qualities=use_worker_qualities, use_rationales=use_rationales,
-            n_jobs=n_jobs, init_set_path=init_set)
+            n_jobs=n_jobs, init_set=init_set, crowd_label_metric=crowd_label_metric)
 
 
 

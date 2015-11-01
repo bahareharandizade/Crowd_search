@@ -757,6 +757,10 @@ def run_AL_fp(model, al_method, batch_size,
         # using total tn, fp, fn and fp counts is sensible, multipled through
         # by some scalar for asymmetry
         sensitivity, specificity, precision, f2measure = ar.compute_measures(tp, fp, fn, tn)
+        if sensitivity != 'UNDEFINED' and specificity != 'UNDEFINED':
+            balanced_accuracy = (sensitivity+specificity)/2.0
+        else:
+            balanced_accuracy = 'UNDEFINED'
 
         #auc = metrics.roc_auc_score(np.array(true_y)[~train_idx], aggregate_predictions)
         yield_val = float(tpc+tp)/float(tpc+tp+fn)

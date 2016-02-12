@@ -37,7 +37,7 @@ class ARModel():
                     pos_rationales_worker_ids=None, neg_rationales_worker_ids=None, 
                     worker_qualities=None,
                     C=1, C_contrast_scalar=.1, mu=1.0, alpha=0.01, 
-                    loss="log", n_jobs=1):
+                    loss="log", n_jobs=1, pos_pmids_to_rats=None, neg_pmids_to_rats=None):
         '''
         Instantiate an Annotators' rationales model.
 
@@ -49,9 +49,12 @@ class ARModel():
         X_neg_rationales : Ditto the above, for negative rationales.
         pos_rationales_worker_ids : Identifiers of the workers who provided the rationales
         worker_qualities: Basically, how much to scale contributions
+        pos/neg_pmids_to_rats: dictionary of pmids to vectorized rationales for use on a per document basis
         '''
         self.X_pos_rationales = X_pos_rationales
         self.X_neg_rationales = X_neg_rationales
+        self.pos_pmids_to_rats = pos_pmids_to_rats
+        self.neg_pmids_to_rats = neg_pmids_to_rats
         
         self.pos_worker_ids = pos_rationales_worker_ids
         self.neg_worker_ids = neg_rationales_worker_ids
@@ -67,7 +70,7 @@ class ARModel():
         print "loss: %s" % (self.loss)
 
 
-    def cv_fit(self, X, y, alpha_vals, C_vals, C_contrast_vals, mu_vals):
+    def cv_fit(self, X, y, alpha_vals, C_vals, C_contrast_vals, mu_vals, contrast_examples = 'per_document'):
         '''
         brute force (grid search) over hyper-parameters.
         '''
@@ -77,12 +80,15 @@ class ARModel():
         ###
         # also keep track of the workers associated with each
         # rational instance!
-        self.pos_pseudo_examples, self.psuedo_pos_workers = _generate_pseudo_examples(self,
-                                                                X, self.X_pos_rationales,  
-                                                                self.pos_worker_ids,  1)
-        self.neg_pseudo_examples, self.psuedo_neg_workers = _generate_pseudo_examples(self,
-                                                                X, self.X_neg_rationales,
-                                                                self.neg_worker_ids, 1)
+        if contrast_examples =='per_document':
+            self.pos_pseudo_examples = _per_document_pseudo()
+        else:
+            self.pos_pseudo_examples, self.psuedo_pos_workers = _generate_pseudo_examples(self,
+                                                                    X, self.X_pos_rationales,  
+                                                                    self.pos_worker_ids,  1)
+            self.neg_pseudo_examples, self.psuedo_neg_workers = _generate_pseudo_examples(self,
+                                                                    X, self.X_neg_rationales,
+                                                                    self.neg_worker_ids, 1)
 
         y = np.array(y)
 
@@ -308,6 +314,11 @@ def parallelKFold(self, X, y, cur_alpha, cur_C, cur_C_contrast_scalar, cur_mu):
     params = {'mu': cur_mu, 'alpha': cur_alpha, 'C': cur_C, 'C_contrast_scalar': cur_C_contrast_scalar}
     score = np.mean(scores_for_params)
     return (score, params)
+
+def _per_document_pseudo():
+    print '-- generating per document instances for %s rationales --' 
+
+    
 
 def _generate_pseudo_examples(self, X, X_rationales, rationale_worker_ids=None, mu=1):
     print "-- generating instances for %s rationales --" % X_rationales.shape[0]

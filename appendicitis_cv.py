@@ -78,8 +78,9 @@ def read_lbls(labels_path="fullscale-data/appendicitis_labels.csv"):
     lvl2_set = lbls[lbls["lvl2"].isin(["yes", "Yes"])]["PMID"].values
     return lvl1_set, lvl2_set
 
-# do we need pmids? because we lose them here!
-def flatten_rationales(all_rationales, workers):
+# do we need pmids? because we lose them here! 
+#dan: YUP! dammit. This breaks rationales into individual terms
+def flatten_rationales(all_rationales, workers,pmids = None):
     # s is something like 
     #   'describe a 24-year-old Pakistani man,"admitted twice to our hospital"'
     # here we parse this CSV string
@@ -181,6 +182,42 @@ def estimate_quality_for_q(annotations, qnum, pmids=None):
     proxy_skill = (q_model.theta[:,0,0] + q_model.theta[:,1,1]) / 2.0
     return dict(zip(workers, proxy_skill))
 
+def get_q_rationales_w_pmids(data, qnum, pmids):
+    pos_annotations_for_q = data[data["q%s"%qnum]=="Yes"]
+    neg_annotations_for_q = data[data["q%s"%qnum]=="No"]
+
+    pos_annotations_for_q = \
+        pos_annotations_for_q[pos_annotations_for_q['documentId'].isin(pmids)]
+
+    neg_annotations_for_q = \
+        neg_annotations_for_q[neg_annotations_for_q['documentId'].isin(pmids)]
+
+    pos_rationales = pos_annotations_for_q["q%skeys" % qnum].values 
+    pos_worker_ids = pos_annotations_for_q["workerId"].values
+    pos_pmids = pos_annotations_for_q['documentId'].values
+
+    #skipping "flattening" since I'm looking to do on a /document basis anyway and flattening ruins that. 
+
+    pos_pmids_rat_dict = defaultdict(list)
+    #pos_pmids_worker_dict = defaultdict(list)
+    for ind,val in enumerate(pos_pmids):
+        pos_pmids_dict[val].append([vectorizer.transform(rat) for rat in pos_rationales[ind].split(',')])
+        #pos_pmids_worker_dict.append(pos_worker_ids[val])
+    #do I need to loop through all the pos rationales? I don't think so. I think I can just make a dictionary, yes? or is ThAT what flatten does. 
+    #need some for-each statement in here to split rationales into actual rationales. that's all. 
+
+    neg_rationales = neg_annotations_for_q["q%skeys" % qnum].values
+    neg_worker_ids = neg_annotations_for_q["workerId"].values
+    neg_pmids = neg_annotations_for_q['documentId'].values
+
+    neg_pmids_rat_dict = defaultdict(list)
+    #pos_pmids_worker_dict = defaultdict(list)
+    for ind,val in enumerate(neg_pmids):
+        neg_pmids_dict[val].append([vectorizer.transform(rat) for rat in neg_rationales[ind].split(',')])
+        #pos_pmids_worker_dict.append(pos_worker_ids[val])
+
+    return pos_pmids_dict, neg_pmids_dict
+
 
 def get_q_rationales(data, qnum, pmids=None):
     pos_annotations_for_q = data[data["q%s"%qnum]=="Yes"]
@@ -207,6 +244,7 @@ def get_q_rationales(data, qnum, pmids=None):
         return s 
 
     # collapse into a single set
+    # we're using a bigram model for classification but only a unigram model here
     pos_rationales, pos_worker_ids = flatten_rationales(pos_rationales, pos_worker_ids)
     pos_rationales = [_quick_clean(pr) for pr in pos_rationales]
     #pos_rationales = list(chain.from_iterable(pos_rationales))
@@ -227,8 +265,7 @@ def get_q_rationales(data, qnum, pmids=None):
 
     # collapse into a single set; note that this is basically
     # the most naive means of combining rationales
-
-    #pdb.set_trace()
+    # dan: this does our deduping. I get it now. 
     pos_rationales_to_worker_ids = defaultdict(list)
     for pos_rationale, pos_worker in zip(pos_rationales, pos_worker_ids):
         pos_rationales_to_worker_ids[pos_rationale].append(pos_worker)
@@ -237,7 +274,6 @@ def get_q_rationales(data, qnum, pmids=None):
     for neg_rationale, neg_worker in zip(neg_rationales, neg_worker_ids):
         neg_rationales_to_worker_ids[neg_rationale].append(neg_worker)
     
-
     #return list(set(pos_rationales)), list(set(neg_rationales))
 
     # @TODO should probably roll up into an object
@@ -321,12 +357,13 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, use
     annotations = load_appendicitis_annotations(use_grouped_data)
     lvl1_pmids, lvl2_pmids = read_lbls()
 
-    # Data
+    # Data - pmids are in the proper order
     texts, pmids = load_texts_and_pmids()
     vectorizer = TfidfVectorizer(stop_words="english", ngram_range=(1,2), min_df=3, max_features=50000)
     X_all = vectorizer.fit_transform(texts)
+    #pdb.set_trace()
 
-    # Generating folds to evaluate annotations.
+    # Generating folds to evaluate annotations. - dan: these are the ids which have labels
     unique_labeled_pmids = list(set(annotations['documentId']))
     folds = KFold(len(unique_labeled_pmids), n_folds=n_folds, 
                     shuffle=True, random_state=42)
@@ -420,7 +457,6 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, use
         test_y = np.array(test_y)
         train_y = np.array(train_y)
         
-
         if "cf" in model:
             if model == "cf-stacked":
                 if use_grouped_data:
@@ -680,7 +716,7 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer,
         train_indicators = np.in1d(pmids, train_pmids)
         X_train = X[train_indicators]
         
-
+        #dan - so, now, in theory X_train has all documents in order of train_pmids. Based on how pandas works this is right, yes
         q_lbls, q_X_train, q_X_train_indices = [], [], []
 
         worker_ids = []
@@ -736,16 +772,26 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer,
             #pos_rationales, pos_rationale_worker_ids, \
             #    neg_rationales, neg_rationale_worker_ids 
 
+            #how do I actually utilize my stuff
+            if(dan_test_flag):
+                #dictionaries of pmid:[vectorized rationales]
+                pos_pmids_to_rationales, neg_pmids_to_rationales = get_q_rationales_w_pmids(annotations, question_num, train_pmids)
+                #what do I need to modify in q_model? 
+                #should I make a separate class/function within the model or modify existing functions?
+                #I think making separate functions is correct but first enumerate the changes you need to actually make
+                #1: in constructor, have a flag/enum for which test suite we're running, as well as the ability to add dicts
+                #2: write completely separate methods for generating pseudo pos/neg examples, include a flag in cv_fit s.t. you can switch b/w them
+                #3: run tests w/this method, minimal grid search (which is real time hog)
+                #test right now (step 0), and in between all other steps. 
+                
+
             # these are now dictionaries mapping rationales to 
             # lists of workers that provided them
             pos_rationales_d, neg_rationales_d = get_q_rationales(annotations, 
                                                             question_num, pmids=train_pmids)
-
-            # collapse to unique list
+            # collapse to unique worker list; this just gets the best worker ID for each rationale, does no de-duping CHECK AGAIN? 
             pos_rationale_worker_ids, unique_pos_rationales = get_unique(pos_rationales_d, worker_qualities)
             neg_rationale_worker_ids, unique_neg_rationales = get_unique(neg_rationales_d, worker_qualities)
-
-
 
             # note that this technically gives us tfidf vectors, but we only use 
             # these to look up non-zero entries anyway (otherwise tf-idf would be a
@@ -753,7 +799,6 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer,
             X_pos_rationales = vectorizer.transform(unique_pos_rationales)
             X_neg_rationales = vectorizer.transform(unique_neg_rationales)
 
-            
             # ok, build the model already
             # hyper-params first (for gridsearch)
             alpha_vals = 10.0**-np.arange(1,7)

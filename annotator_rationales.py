@@ -87,15 +87,19 @@ class ARModel():
         y = np.array(y)
 
         print "Initiating parallel KFolds"
+        #Danbug: reducing the number of these to see what else we even do here
         result = Parallel(n_jobs=self.n_jobs, verbose=50)(delayed(parallelKFold)(self,
                                                            X,
                                                            y,
                                                            cur_alpha,
-                                                           cur_C,
-                                                           cur_C_contrast_scalar,
-                                                           cur_mu)
-                                    for cur_alpha, cur_C, cur_C_contrast_scalar, cur_mu
-                                    in product(alpha_vals, C_vals, C_contrast_vals, mu_vals))
+                                                           C_vals[0],
+                                                           C_contrast_vals[0],
+                                                           mu_vals[0])
+                                    #for cur_alpha, cur_C, cur_C_contrast_scalar, cur_mu
+                                    #in product(alpha_vals, C_vals, C_contrast_vals, mu_vals))
+                                    for cur_alpha
+                                    in alpha_vals)
+        print "FINISHED PARALLEL KFOLDS!!!!!"
         parameterScores = dict(result)
         best_score = min(k for k, v in parameterScores.iteritems())
         bestParams = parameterScores[best_score]
@@ -149,6 +153,8 @@ class ARModel():
 
 
     def fit(self, X, y):
+        #danbug
+        print 'called clf.fit'
         '''
         Fit the annotator rationales model using the provided training 
         data + rationales. 
@@ -308,6 +314,7 @@ def _generate_pseudo_examples(self, X, X_rationales, rationale_worker_ids=None, 
 
     contrast_instances = []
     workers = []
+    #pdb.set_trace()
 
     ##
     # iterate over training data, figure out which instances
@@ -318,7 +325,9 @@ def _generate_pseudo_examples(self, X, X_rationales, rationale_worker_ids=None, 
                                                                                        X_rationales,
                                                                                        rationale_worker_ids,
                                                                                        mu)
-                                                     for i in xrange(X.shape[0]))
+                                                     #for i in xrange(X.shape[0]))
+                                                    for i in xrange(10))
+    #danbug
     for i in results:
         for ci in i[0]:
             contrast_instances.append(ci)
@@ -331,9 +340,13 @@ def _generate_pseudo_examples(self, X, X_rationales, rationale_worker_ids=None, 
 def _parallelPseudoExamples(i, X, X_rationales, rationale_worker_ids, mu):
     contrast_instances = []
     workers = []
+    #get all terms in document i, which is the current document that we are inducing pseudo examples upon
     X_i_nonzero = X[i].nonzero()[1]
+    #for all rationales
     for j in xrange(X_rationales.shape[0]):
+        #nonzero values in this rationale
         rationale_j_nonzero = X_rationales[j].nonzero()[1]
+        #nonzero indices shared w/this rationale and this document
         shared_nonzero_indices = np.intersect1d(X_i_nonzero, rationale_j_nonzero)
         worker = None
         if rationale_worker_ids is not None:
@@ -342,13 +355,14 @@ def _parallelPseudoExamples(i, X, X_rationales, rationale_worker_ids, mu):
         ### TMP TMP TMP
         #if shared_nonzero_indices.shape[0] > 0:
         #pdb.set_trace()
+        #if there is a match for this rationale
         if shared_nonzero_indices.shape[0] == rationale_j_nonzero.shape[0]: # experimental!
             # then introduce a contrast instance!
-            # i.e., maske out rationale
+            # i.e., mask out rationale
             #print "ah ha!"
             pseudoexample = X[i].copy()
             pseudoexample[0,shared_nonzero_indices] = 0
-
+            #default mu = 1, scale these later
             contrast_instances.append(pseudoexample/mu)
             workers.append(worker)
     return (contrast_instances, workers)

@@ -37,7 +37,7 @@ class ARModel():
                     pos_rationales_worker_ids=None, neg_rationales_worker_ids=None, 
                     worker_qualities=None,
                     C=1, C_contrast_scalar=.1, mu=1.0, alpha=0.01, 
-                    loss="log", n_jobs=1, pos_pmids_to_rats=None, neg_pmids_to_rats=None):
+                    loss="log", n_jobs=1, pmids_to_rats={}):
         '''
         Instantiate an Annotators' rationales model.
 
@@ -53,8 +53,7 @@ class ARModel():
         '''
         self.X_pos_rationales = X_pos_rationales
         self.X_neg_rationales = X_neg_rationales
-        self.pos_pmids_to_rats = pos_pmids_to_rats
-        self.neg_pmids_to_rats = neg_pmids_to_rats
+        self.pmids_to_rats = pmids_to_rats
         
         self.pos_worker_ids = pos_rationales_worker_ids
         self.neg_worker_ids = neg_rationales_worker_ids
@@ -70,7 +69,7 @@ class ARModel():
         print "loss: %s" % (self.loss)
 
 
-    def cv_fit(self, X, y, alpha_vals, C_vals, C_contrast_vals, mu_vals, contrast_examples = 'per_document'):
+    def cv_fit(self, X, y, alpha_vals, C_vals, C_contrast_vals, mu_vals, train_pmids, contrast_examples = 'per_document'):
         '''
         brute force (grid search) over hyper-parameters.
         '''
@@ -81,7 +80,7 @@ class ARModel():
         # also keep track of the workers associated with each
         # rational instance!
         if contrast_examples =='per_document':
-            self.pos_pseudo_examples = _per_document_pseudo()
+            self.pseudo_examples = _per_document_pseudo(X, pmids_to_rats, train_pmids)
         else:
             self.pos_pseudo_examples, self.psuedo_pos_workers = _generate_pseudo_examples(self,
                                                                     X, self.X_pos_rationales,  
@@ -315,10 +314,30 @@ def parallelKFold(self, X, y, cur_alpha, cur_C, cur_C_contrast_scalar, cur_mu):
     score = np.mean(scores_for_params)
     return (score, params)
 
-def _per_document_pseudo():
-    print '-- generating per document instances for %s rationales --' 
+def _per_document_pseudo(self, X, pmids_to_rats, train_pmids, mu=1):
+    #how do we map pos/neg to appropriate rationales
+    print '-- generating per document instances for %s documents --' % X.shape(0)
+    contrast_instances = []
 
-    
+    for ind,pmid in enumerate(train_pmids):
+        #store doc
+        cur_doc = X[ind]
+        #create master ex
+        master_contrast = X[ind][:]
+        for val in pmids_to_rats[pmid]:
+            pseudoexample = cur_doc.copy()
+            #mask out contrast values
+            pseudoexample[0,val.nonzero()[1]] = 0
+            contrast_insances.append(pseudoexample)
+            #add to master
+            master_contrast = master_contrast[0,val.nonzero()[1]] = 0
+        contrast_instances.append(master_contrast)
+    #NOTE: can make a dictionary here real easy like
+    pseudoexamples = sp.sparse.vstack(contrast_instances)
+    pdb.set_trace()
+
+    return pseudoexamples
+
 
 def _generate_pseudo_examples(self, X, X_rationales, rationale_worker_ids=None, mu=1):
     print "-- generating instances for %s rationales --" % X_rationales.shape[0]

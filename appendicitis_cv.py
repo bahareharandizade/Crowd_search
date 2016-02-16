@@ -6,6 +6,10 @@ import string
 import math 
 from collections import defaultdict 
 import re 
+import warnings
+
+#shuts up those infinite warnings coming to stdout to make it human
+warnings.filterwarnings('ignore')
 
 import numpy as np 
 
@@ -189,6 +193,20 @@ def _quick_clean(s):
     s = ''.join(ch for ch in s if ch not in exclude)
     return s 
 
+#dan - made specifically for rationales. Is probably redundant, but w/e
+def clean_rats(dirty_rat):
+    rat_out = []
+    #keep hyphens in for "n-year-old-man", etc.
+    exclude = set(string.punctuation)
+    exclude.remove('-')
+    for val in dirty_rat:
+        to_add = ''.join(ch for ch in val if ch not in exclude)
+        to_add = to_add.decode('utf-8').lower()
+        #scrub non-words 
+        if (len(to_add) > 0):
+            rat_out.append(to_add)
+    return rat_out
+
 def get_q_rationales(data, qnum, pmids=None):
     pos_annotations_for_q = data[data["q%s"%qnum]=="Yes"]
     neg_annotations_for_q = data[data["q%s"%qnum]=="No"]
@@ -252,26 +270,24 @@ def get_q_rationales_w_pmids(data, qnum, pmids,vectorizer):
 
     neg_annotations_for_q = \
         neg_annotations_for_q[neg_annotations_for_q['documentId'].isin(pmids)]
-
+    #look into tokenizing everything. see how that goes as a next step. 
     pos_rationales = pos_annotations_for_q["q%skeys" % qnum].values 
-    pos_rationales = [_quick_clean(pr) for pr in pos_rationales]
+    #let's tru tokenizing instead
+    #pos_rationales = [_quick_clean(pr) for pr in pos_rationales]
     pos_worker_ids = pos_annotations_for_q["workerId"].values
     pos_pmids = pos_annotations_for_q['documentId'].values
 
     #skipping "flattening" since I'm looking to do on a /document basis anyway and flattening ruins that. 
-    pdb.set_trace()
+    all_pmids_dict = defaultdict(list)
     pos_pmids_dict = defaultdict(list)
     #pos_pmids_worker_dict = defaultdict(list)
     for ind,val in enumerate(pos_pmids):
-        print ind, pos_rationales[ind]
-        pos_pmids_dict[val].append([vectorizer.transform(rat) for rat in pos_rationales[ind].split(',')])
-        #pos_pmids_worker_dict.append(pos_worker_ids[val])
-        #so br
-    #do I need to loop through all the pos rationales? I don't think so. I think I can just make a dictionary, yes? or is ThAT what flatten does. 
-    #need some for-each statement in here to split rationales into actual rationales. that's all. 
-
+        to_vectorize = list(set(clean_rats(pos_rationales[ind].split(','))))
+        pos_pmids_dict[val].append(vectorizer.transform(to_vectorize))
+        all_pmids_dict[val].append(vectorizer.transform(to_vectorize))
+ 
     neg_rationales = neg_annotations_for_q["q%skeys" % qnum].values
-    neg_rationales = [_quick_clean(nr) for nr in neg_rationales]
+    #neg_rationales = [_quick_clean(nr) for nr in neg_rationales]
     neg_worker_ids = neg_annotations_for_q["workerId"].values
     neg_pmids = neg_annotations_for_q['documentId'].values
 
@@ -279,10 +295,12 @@ def get_q_rationales_w_pmids(data, qnum, pmids,vectorizer):
     #pos_pmids_worker_dict = defaultdict(list)
 
     for ind,val in enumerate(neg_pmids):
-        neg_pmids_dict[val].append([vectorizer.transform(rat) for rat in neg_rationales[ind].split(',')])
-        #pos_pmids_worker_dict.append(pos_worker_ids[val])
+        to_vectorize = list(set(clean_rats(pos_rationales[ind].split(','))))
 
-    return pos_pmids_dict, neg_pmids_dict
+        pos_pmids_dict[val].append(vectorizer.transform(to_vectorize))
+        all_pmids_dict[val].append(vectorizer.transform(to_vectorize))
+    #returns all, only using all_dict, but hey. 
+    return pos_pmids_dict, neg_pmids_dict, all_pmids_dict
 
 def get_SGD(class_weight="auto", loss="log", random_state=None, fit_params=None, n_jobs=1):
     #C_range = np.logspace(-2, 10, 13)
@@ -354,8 +372,7 @@ def cartesian(arrays, out=None):
             out[j*m:(j+1)*m,1:] = out[0:m,1:]
     return out
 
-def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, use_rationales=False,
-                             use_grouped_data=False, use_decomposed_training=False, n_jobs=1, n_folds=5):
+def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, use_rationales=False, use_grouped_data=False, use_decomposed_training=False, n_jobs=1, n_folds=5, rat_test_flag=True):
     ##
     # basics: just load in the data + labels, vectorize
     annotations = load_appendicitis_annotations(use_grouped_data)
@@ -470,7 +487,7 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, use
                                             vectorizer, model=model,
                                             use_worker_qualities=use_worker_qualities,
                                             use_rationales=True,
-                                            n_jobs=n_jobs,rat_test_flag=True)
+                                            n_jobs=n_jobs,rat_test_flag=rat_test_flag)
                 else:
                     q_models = get_q_models(annotations, X_all, pmids, train_pmids,
                                             vectorizer, model=model,
@@ -706,7 +723,7 @@ def get_grouped_rationales_model(annotations, X, train_y, pmids, train_pmids, tr
 
 
 def get_q_models(annotations, X, pmids, train_pmids, vectorizer, 
-                    model="cf-stacked", use_worker_qualities=True, use_rationales=False, n_jobs=1, rat_test_flag=True):
+                    model="cf-stacked", use_worker_qualities=True, use_rationales=False, n_jobs=1, rat_test_flag=False):
     q_models = []
     
     # Note we skip question 2 because it's numeric
@@ -780,24 +797,13 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer,
 
             if(rat_test_flag):
                 #dictionaries of pmid:[vectorized rationales]
-                pos_pmids_to_rationales, neg_pmids_to_rationales = get_q_rationales_w_pmids(annotations, question_num, train_pmids, vectorizer)
-
-                pdb.set_trace()
-
-                #what do I need to modify in q_model? 
-                #should I make a separate class/function within the model or modify existing functions?
-                #I think making separate functions is correct but first enumerate the changes you need to actually make
-                #1: in constructor add the ability to add dicts
-                #2: write completely separate methods for generating pseudo pos/neg examples, include a flag in cv_fit s.t. you can switch b/w them
-                #3: run tests w/this method, minimal grid search (which is real time hog)
-                #test right now (step 0), and in between all other steps. 
-                
+                print rat_test_flag
+                _, _, pmids_to_rationales = get_q_rationales_w_pmids(annotations, question_num, train_pmids, vectorizer)
 
             # these are now dictionaries mapping rationales to 
             # lists of workers that provided them
             pos_rationales_d, neg_rationales_d = get_q_rationales(annotations, 
                                                             question_num, pmids=train_pmids)
-            
             # collapse to unique worker list; this just gets the best worker ID for each rationale, does no de-duping 
             pos_rationale_worker_ids, unique_pos_rationales = get_unique(pos_rationales_d, worker_qualities)
             neg_rationale_worker_ids, unique_neg_rationales = get_unique(neg_rationales_d, worker_qualities)
@@ -832,9 +838,10 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer,
                                  pos_rationale_worker_ids, neg_rationale_worker_ids,
                                  worker_qualities,
                                  loss="log",
-                                 n_jobs=n_jobs)
+                                 n_jobs=n_jobs, 
+                                 pmids_to_rats = pmids_to_rationales)
 
-            q_model.cv_fit(q_X_train, q_lbls, alpha_vals, C_vals, C_contrast_vals, mu_vals)
+            q_model.cv_fit(q_X_train, q_lbls, alpha_vals, C_vals, C_contrast_vals, mu_vals, train_pmids)
             q_models.append(q_model)
             #q_model = ar.ARModel(X_pos_rationales, X_neg_rationales, loss="log")
         else:

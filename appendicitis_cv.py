@@ -741,9 +741,9 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer,
         X_train_pmids = pmids[train_indicators]
 
         #so, here, I need to build a dictionary of X_train : document_ID
-        pmid_to_X_train = defaultdict(list)
-        for ind,val in enumerate(X_train_pmids):
-            pmid_to_X_train[val] = X_train[ind]
+        # pmid_to_X_train = defaultdict(list)
+        # for ind,val in enumerate(X_train_pmids):
+        #     pmid_to_X_train[val] = X_train[ind]
 
         #Proof that pmids & train_pmids are not in the same order:
         # it = 0
@@ -756,7 +756,11 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer,
         #dan - so, now, we have X_train as a dictionary of PMIDS to values. 
         q_lbls, q_X_train, q_X_train_indices = [], [], []
 
+        #dictionaries of pmids to X_label and pmids to X_document
         pmid_to_X_label = defaultdict(list)
+        pmid_to_X_train = defaultdict(list)
+
+        #if: use_workers 
 
         worker_ids = []
         # build up a labels vector for this question, just using
@@ -771,17 +775,19 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer,
             #list of workers making said decisions
             cur_workers = list(cur_pmid_annotations['workerId'].values)
 
-
-            #q_decisions_for_pmid = \
-            #    list(annotations[annotations['documentId'] == pmid]['q%s' % question_num].values)
             #number of workers who did not vote yes or no for this document
             absent_votes = q_decisions_for_pmid.count("\\N") + q_decisions_for_pmid.count("")
 
             if absent_votes == len(q_decisions_for_pmid):
                 #if all workers did not vote on this document, do nothing
+                #how do we remove this from the list of pmids to train on?
+                #what dictates which pmids we are going to train on? 
                 pass 
             else: 
                 #q_X_train.append(X_train[i])
+                #adds X_train to our dictionary of pmids
+                pmid_to_X_train[pmid] = X_train[i]
+
                 for decision_index, d in enumerate(q_decisions_for_pmid):
                     #dan - cur_labels is a little hack to temporarily avoid worker quality estimates
                     cur_labels = []
@@ -803,8 +809,6 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer,
                     #mean classification for now. This is bad, I know, I know.
                     pmid_to_X_label[pmid] = (int(np.mean(cur_labels) > 0)*2)-1
 
-                #check this label. make sure it works ok. Also, rerun code to make sure nothing else...weird has happened. 
-
                 '''
                 number_of_labels = float(len(q_decisions_for_pmid) - absent_votes)
                 no_votes = q_decisions_for_pmid.count("No") # all other decisions we take as yes
@@ -814,11 +818,25 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer,
                 else:
                     q_lbls.append(1)
                 '''
-        #DAN (talking point): All this is doing is copying each example three times. It seems counter-useful. And I guess I should fix it. 
-        #It is not, in fact, copying each example three times. What it is doing instead is storing each example one time per worker 
         #The error is more subtle, then - it assumes that train_pmids is in the same order as X_train. This is (weirdly) not the case. 
-        #fixed above
         q_X_train = X_train[q_X_train_indices]
+
+        #presently our q_X_train may have overrepresented documents based on worker quality estimates. So, what I propose to do instead,
+        #is take the mean document representation and utilize that UNLESS we are using worker quality estimates
+        if not use_worker_qualities :
+            # undoes the duplication of documents by workers. 
+            # builds up a vector of X_train and lbls consistent with order in X_train_pmids
+            # gives a standardized jumping off point for classifier. 
+            q_X_train = []
+            q_lbls = []
+            old_train = X_train_pmids
+            X_train_pmids = pmid_to_X_label.keys()
+            for val in X_train_pmids:
+                q_X_train.append(pmid_to_X_train[pmid])
+                q_lbls.append(pmid_to_X_label[pmid])
+
+
+
 
         if(use_rationales):
             # Specifically we have several methods which call this method, but they don't necessarily all want the

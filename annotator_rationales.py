@@ -83,12 +83,13 @@ class ARModel():
         # also keep track of the workers associated with each
         # rational instance!
         if contrast_examples =='per_document':
-            self.pseudo_examples = _per_document_pseudo(self, self.pmids_to_docs, self.pmids_to_rats, train_pmids)
+            self.pos_pseudo_examples, self.neg_pseudo_examples = _per_document_pseudo(self, self.pmids_to_docs, self.pmids_to_rats, self.pmids_to_labels, train_pmids)
         else:
-            self.pos_pseudo_examples, self.psuedo_pos_workers = _generate_pseudo_examples(self,
+            #Dan: negative examples come from positive rationales, and vice versa. 
+            self.neg_pseudo_examples, self.psuedo_neg_workers = _generate_pseudo_examples(self,
                                                                     X, self.X_pos_rationales,  
                                                                     self.pos_worker_ids,  1)
-            self.neg_pseudo_examples, self.psuedo_neg_workers = _generate_pseudo_examples(self,
+            self.pos_pseudo_examples, self.psuedo_pos_workers = _generate_pseudo_examples(self,
                                                                     X, self.X_neg_rationales,
                                                                     self.neg_worker_ids, 1)
 
@@ -264,9 +265,10 @@ def parallelKFold(self, X, y, cur_alpha, cur_C, cur_C_contrast_scalar, cur_mu):
         # standard C for non-contrastive instances
         instance_weights = np.ones(cur_X_train.shape[0]) * self.C
 
-
         # now append pseudo instances to the training data!
         # note that we scale these by cur_mu!
+        # TODO: now that we have our dict of pseudo instances, we can modify to only call on those in this fold. 
+        
         cur_X_train = sp.sparse.vstack((cur_X_train, self.pos_pseudo_examples/cur_mu))
         cur_y_train = np.hstack((cur_y_train, np.ones(self.pos_pseudo_examples.shape[0])))
 
@@ -317,32 +319,39 @@ def parallelKFold(self, X, y, cur_alpha, cur_C, cur_C_contrast_scalar, cur_mu):
     score = np.mean(scores_for_params)
     return (score, params)
 
-def _per_document_pseudo(self, pmids_to_docs, pmids_to_rats, train_pmids, mu=1):
+def _per_document_pseudo(self, pmids_to_docs, pmids_to_rats, pmids_to_labels, train_pmids, mu=1):
     #how do we map pos/neg to appropriate rationales
     print '-- generating per document instances for %s documents --' % len(pmids_to_docs.values())
-    contrast_instances = []
+    pos_rats_masked_out = []
+    neg_rats_masked_out = []
 
     for pmid in train_pmids:
         #store doc
         cur_doc = pmids_to_docs[pmid]
         #create master ex
         master_contrast = cur_doc.copy()
+        if pmids_to_labels[pmid] == 1:
+            cur_list = pos_rats_masked_out
+        else:
+            cur_list = neg_rats_masked_out
+
         for val in pmids_to_rats[pmid]:
             #loop through each row in vector
             for row in range(val.shape[0]):
                 pseudoexample = cur_doc.copy()
                 #mask out contrast values
                 pseudoexample[0,val[row].nonzero()[1]] = 0
-                contrast_instances.append(pseudoexample)
+                cur_list.append(pseudoexample)
                 #add to master
                 master_contrast[0,val[row].nonzero()[1]] = 0
-        contrast_instances.append(master_contrast)
+        cur_list.append(master_contrast)
         
     #NOTE: can make a dictionary here real easy like
-    pseudoexamples = sp.sparse.vstack(contrast_instances)
+    neg_pseudoexamples = sp.sparse.vstack(pos_rats_masked_out)
+    pos_pseudoexamples = sp.sparse.vstack(neg_rats_masked_out)
     pdb.set_trace()
 
-    return pseudoexamples
+    return pos_pseudoexamples, neg_pseudoexamples
 
 
 def _generate_pseudo_examples(self, X, X_rationales, rationale_worker_ids=None, mu=1):

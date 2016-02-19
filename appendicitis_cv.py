@@ -283,6 +283,7 @@ def get_q_rationales_w_pmids(data, qnum, pmids,vectorizer):
     #pos_pmids_worker_dict = defaultdict(list)
     for ind,val in enumerate(pos_pmids):
         to_vectorize = list(set(clean_rats(pos_rationales[ind].split(','))))
+        #generates matrix where row is rationale, columns are words present
         pos_pmids_dict[val].append(vectorizer.transform(to_vectorize))
         all_pmids_dict[val].append(vectorizer.transform(to_vectorize))
  
@@ -735,42 +736,74 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer,
 
         # recall that pmids aligns with X. 
         train_indicators = np.in1d(pmids, train_pmids)
-        X_train = X[train_indicators]
         
-        #dan - so, now, in theory X_train has all documents in order of train_pmids. Based on how pandas works this is right, yes
+        X_train = X[train_indicators]
+        X_train_pmids = pmids[train_indicators]
+
+        #so, here, I need to build a dictionary of X_train : document_ID
+        pmid_to_X_train = defaultdict(list)
+        for ind,val in enumerate(X_train_pmids):
+            pmid_to_X_train[val] = X_train[ind]
+
+        #Proof that pmids & train_pmids are not in the same order:
+        # it = 0
+        # for ind,val in enumerate(train_indicators):
+        #     if val == True:
+        #         print pmids[ind], train_pmids[it]
+        #         it = it +1
+
+        
+        #dan - so, now, we have X_train as a dictionary of PMIDS to values. 
         q_lbls, q_X_train, q_X_train_indices = [], [], []
+
+        pmid_to_X_label = defaultdict(list)
 
         worker_ids = []
         # build up a labels vector for this question, just using
         # majority vote.
-        for i, pmid in enumerate(train_pmids):
+        # dan - changed train_pmids to X_train_pmids. X_train_pmids is in the proper order
+        for i, pmid in enumerate(X_train_pmids):
+            #annotations for all workers
             cur_pmid_annotations = annotations[annotations['documentId'] == pmid]
 
+            #list of decisions that each worker made for given document
             q_decisions_for_pmid = list(cur_pmid_annotations['q%s' % question_num].values)
+            #list of workers making said decisions
             cur_workers = list(cur_pmid_annotations['workerId'].values)
 
 
             #q_decisions_for_pmid = \
             #    list(annotations[annotations['documentId'] == pmid]['q%s' % question_num].values)
-            
+            #number of workers who did not vote yes or no for this document
             absent_votes = q_decisions_for_pmid.count("\\N") + q_decisions_for_pmid.count("")
 
             if absent_votes == len(q_decisions_for_pmid):
+                #if all workers did not vote on this document, do nothing
                 pass 
             else: 
                 #q_X_train.append(X_train[i])
                 for decision_index, d in enumerate(q_decisions_for_pmid):
+                    #dan - cur_labels is a little hack to temporarily avoid worker quality estimates
+                    cur_labels = []
                     if d == "\\N":
+                        #if any worker did not vote on this document, remove it from list of train 
                         pass 
                     else:
+                        #append worker ID to list of worker IDs
                         worker_ids.append(cur_workers[decision_index])
+                        #
                         q_X_train_indices.append(i)
+                        #append list of labels provided by each worker to q_lbls
                         if d in ("No", "no"):
+                            cur_labels.append(-1)
                             q_lbls.append(-1)
                         else:
                             q_lbls.append(1)
+                            cur_labels.append(1)
+                    #mean classification for now. This is bad, I know, I know.
+                    pmid_to_X_label[pmid] = (int(np.mean(cur_labels) > 0)*2)-1
 
-                
+                #check this label. make sure it works ok. Also, rerun code to make sure nothing else...weird has happened. 
 
                 '''
                 number_of_labels = float(len(q_decisions_for_pmid) - absent_votes)
@@ -781,6 +814,10 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer,
                 else:
                     q_lbls.append(1)
                 '''
+        #DAN (talking point): All this is doing is copying each example three times. It seems counter-useful. And I guess I should fix it. 
+        #It is not, in fact, copying each example three times. What it is doing instead is storing each example one time per worker 
+        #The error is more subtle, then - it assumes that train_pmids is in the same order as X_train. This is (weirdly) not the case. 
+        #fixed above
         q_X_train = X_train[q_X_train_indices]
 
         if(use_rationales):
@@ -839,9 +876,11 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer,
                                  worker_qualities,
                                  loss="log",
                                  n_jobs=n_jobs, 
-                                 pmids_to_rats = pmids_to_rationales)
+                                 pmids_to_rats = pmids_to_rationales,
+                                 pmids_to_docs = pmid_to_X_train,
+                                 pmids_to_labels = pmid_to_X_label)
 
-            q_model.cv_fit(q_X_train, q_lbls, alpha_vals, C_vals, C_contrast_vals, mu_vals, train_pmids)
+            q_model.cv_fit(q_X_train, q_lbls, alpha_vals, C_vals, C_contrast_vals, mu_vals, X_train_pmids)
             q_models.append(q_model)
             #q_model = ar.ARModel(X_pos_rationales, X_neg_rationales, loss="log")
         else:

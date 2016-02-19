@@ -37,7 +37,8 @@ class ARModel():
                     pos_rationales_worker_ids=None, neg_rationales_worker_ids=None, 
                     worker_qualities=None,
                     C=1, C_contrast_scalar=.1, mu=1.0, alpha=0.01, 
-                    loss="log", n_jobs=1, pmids_to_rats={}):
+                    loss="log", n_jobs=1, 
+                    pmids_to_rats={}, pmids_to_docs={}, pmids_to_labels={}):
         '''
         Instantiate an Annotators' rationales model.
 
@@ -54,6 +55,8 @@ class ARModel():
         self.X_pos_rationales = X_pos_rationales
         self.X_neg_rationales = X_neg_rationales
         self.pmids_to_rats = pmids_to_rats
+        self.pmids_to_docs = pmids_to_docs
+        self.pmids_to_labels = pmids_to_labels
         
         self.pos_worker_ids = pos_rationales_worker_ids
         self.neg_worker_ids = neg_rationales_worker_ids
@@ -80,7 +83,7 @@ class ARModel():
         # also keep track of the workers associated with each
         # rational instance!
         if contrast_examples =='per_document':
-            self.pseudo_examples = _per_document_pseudo(X, pmids_to_rats, train_pmids)
+            self.pseudo_examples = _per_document_pseudo(self, self.pmids_to_docs, self.pmids_to_rats, train_pmids)
         else:
             self.pos_pseudo_examples, self.psuedo_pos_workers = _generate_pseudo_examples(self,
                                                                     X, self.X_pos_rationales,  
@@ -290,7 +293,7 @@ def parallelKFold(self, X, y, cur_alpha, cur_C, cur_C_contrast_scalar, cur_mu):
                 cur_idx = self.pos_pseudo_examples.shape[0]+i
                 contrast_weights[cur_idx] = contrast_weights[cur_idx] #* (worker_quality**2)
 
-
+        #list of weights
         cur_instance_weights = np.hstack((instance_weights, contrast_weights))
 
         clf = SGDClassifier(class_weight="auto", loss=self.loss, random_state=42, shuffle=True, alpha=cur_alpha)
@@ -300,7 +303,7 @@ def parallelKFold(self, X, y, cur_alpha, cur_C, cur_C_contrast_scalar, cur_mu):
         # we convert to 0/1 loss here
         errors = np.abs((1+cur_y_test)/2.0 - (1+preds)/2.0)
 
-        # auto-set weights to equal
+        # auto-set weights to equal - scales
         lambda_ = len(cur_y_test[cur_y_test<=0])/float(len(cur_y_test[cur_y_test>0]))
         #print "errors: %s; lambda: %s" % (errors, lambda_)
 
@@ -314,24 +317,27 @@ def parallelKFold(self, X, y, cur_alpha, cur_C, cur_C_contrast_scalar, cur_mu):
     score = np.mean(scores_for_params)
     return (score, params)
 
-def _per_document_pseudo(self, X, pmids_to_rats, train_pmids, mu=1):
+def _per_document_pseudo(self, pmids_to_docs, pmids_to_rats, train_pmids, mu=1):
     #how do we map pos/neg to appropriate rationales
-    print '-- generating per document instances for %s documents --' % X.shape(0)
+    print '-- generating per document instances for %s documents --' % len(pmids_to_docs.values())
     contrast_instances = []
 
-    for ind,pmid in enumerate(train_pmids):
+    for pmid in train_pmids:
         #store doc
-        cur_doc = X[ind]
+        cur_doc = pmids_to_docs[pmid]
         #create master ex
-        master_contrast = X[ind][:]
+        master_contrast = cur_doc.copy()
         for val in pmids_to_rats[pmid]:
-            pseudoexample = cur_doc.copy()
-            #mask out contrast values
-            pseudoexample[0,val.nonzero()[1]] = 0
-            contrast_insances.append(pseudoexample)
-            #add to master
-            master_contrast = master_contrast[0,val.nonzero()[1]] = 0
+            #loop through each row in vector
+            for row in range(val.shape[0]):
+                pseudoexample = cur_doc.copy()
+                #mask out contrast values
+                pseudoexample[0,val[row].nonzero()[1]] = 0
+                contrast_instances.append(pseudoexample)
+                #add to master
+                master_contrast[0,val[row].nonzero()[1]] = 0
         contrast_instances.append(master_contrast)
+        
     #NOTE: can make a dictionary here real easy like
     pseudoexamples = sp.sparse.vstack(contrast_instances)
     pdb.set_trace()

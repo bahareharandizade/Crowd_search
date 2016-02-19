@@ -57,6 +57,7 @@ class ARModel():
         self.pmids_to_rats = pmids_to_rats
         self.pmids_to_docs = pmids_to_docs
         self.pmids_to_labels = pmids_to_labels
+        self.pmids_to_contrast_examples = {}
         
         self.pos_worker_ids = pos_rationales_worker_ids
         self.neg_worker_ids = neg_rationales_worker_ids
@@ -83,16 +84,16 @@ class ARModel():
         # also keep track of the workers associated with each
         # rational instance!
         if contrast_examples =='per_document':
-            self.pos_pseudo_examples, self.neg_pseudo_examples = _per_document_pseudo(self, self.pmids_to_docs, self.pmids_to_rats, self.pmids_to_labels, train_pmids)
+            self.pos_pseudo_examples, self.neg_pseudo_examples, self.pmids_to_contrast_examples = _per_document_pseudo(self, self.pmids_to_docs, self.pmids_to_rats, self.pmids_to_labels, train_pmids)
         else:
             #Dan: negative examples come from positive rationales, and vice versa. 
-            self.neg_pseudo_examples, self.psuedo_neg_workers = _generate_pseudo_examples(self,
-                                                                    X, self.X_pos_rationales,  
+            self.neg_pseudo_examples, self.psuedo_neg_workers, neg_pmids_to_contrast = _generate_pseudo_examples(self, #add neg& pos, then write a little merge fxn.
+                                                                    X, self.X_pos_rationales, train_pmids,  
                                                                     self.pos_worker_ids,  1)
-            self.pos_pseudo_examples, self.psuedo_pos_workers = _generate_pseudo_examples(self,
-                                                                    X, self.X_neg_rationales,
+            self.pos_pseudo_examples, self.psuedo_pos_workers, pos_pmids_to_contrast  = _generate_pseudo_examples(self,
+                                                                    X, self.X_neg_rationales, train_pmids,
                                                                     self.neg_worker_ids, 1)
-
+            self.pmids_to_contrast_examples = dict(neg_pmids_to_contrast.items(), pos_pmids_to_contrast.items())
         y = np.array(y)
 
         print "Initiating parallel KFolds"
@@ -100,6 +101,7 @@ class ARModel():
         result = Parallel(n_jobs=self.n_jobs, verbose=50)(delayed(parallelKFold)(self,
                                                            X,
                                                            y,
+                                                           train_pmids,
                                                            cur_alpha,
                                                            C_vals[0],
                                                            C_contrast_vals[0],
@@ -250,7 +252,7 @@ class ARModel():
         return self 
 
 
-def parallelKFold(self, X, y, cur_alpha, cur_C, cur_C_contrast_scalar, cur_mu):
+def parallelKFold(self, X, y, train_pmids, cur_alpha, cur_C, cur_C_contrast_scalar, cur_mu):
     kf = KFold(X.shape[0], n_folds=5, random_state=42)
     scores_for_params = []
     for nested_train, nested_test in kf:
@@ -262,26 +264,37 @@ def parallelKFold(self, X, y, cur_alpha, cur_C, cur_C_contrast_scalar, cur_mu):
         cur_X_test = X[nested_test,:]
         cur_y_test = y[nested_test]
 
+        cur_pmids = train_pmids[nested_train]
+
         # standard C for non-contrastive instances
         instance_weights = np.ones(cur_X_train.shape[0]) * self.C
 
         # now append pseudo instances to the training data!
         # note that we scale these by cur_mu!
         # TODO: now that we have our dict of pseudo instances, we can modify to only call on those in this fold. 
-        
-        cur_X_train = sp.sparse.vstack((cur_X_train, self.pos_pseudo_examples/cur_mu))
-        cur_y_train = np.hstack((cur_y_train, np.ones(self.pos_pseudo_examples.shape[0])))
+
+        # use list of pmids for lookup
+        # build a list of pseudo_examples and a parallel list of labels
+        # then add pseudo_examples and labels to existing data
+        contrast_examples = []
+        contrast_labels = []
+
+        for val in cur_pmids:
+            contrast_examples.append(pmids_to_contrast_examples[val]/cur_mu)
+            labels = np.ones(pmids_to_contrast_examples[val].shape[0])*pmids_to_labels[val]
+            contrast_labels.append(labels)
 
 
-        cur_X_train = sp.sparse.vstack((cur_X_train, self.neg_pseudo_examples/cur_mu))
-        cur_y_train = np.hstack((cur_y_train, -1*np.ones(self.neg_pseudo_examples.shape[0])))
+        cur_X_train = sp.sparse.vstack((cur_X_train, sp.sparse.vstack(contrast_examples)))
+        cur_y_train = np.hstack((cur_y_train, contrast_labels)))
 
-        total_contrastive_count = self.pos_pseudo_examples.shape[0] + self.neg_pseudo_examples.shape[0]
+        total_contrastive_count = len(contrast_labels)
+
         #cur_instance_weights = np.hstack((instance_weights,
         #                        np.ones(total_contrastive_count) * cur_C * cur_C_contrast_scalar))
         contrast_weights = np.ones(total_contrastive_count) * cur_C * cur_C_contrast_scalar
 
-
+        #!!!!!*****WARNING: this probably does not work now that we do per document CV. Have not fixed yet. 
         if self.worker_qualities is not None:
             # then also scale by worker quality!
             for i in xrange(self.pos_pseudo_examples.shape[0]):
@@ -324,7 +337,9 @@ def _per_document_pseudo(self, pmids_to_docs, pmids_to_rats, pmids_to_labels, tr
     print '-- generating per document instances for %s documents --' % len(pmids_to_docs.values())
     pos_rats_masked_out = []
     neg_rats_masked_out = []
-
+    pmids_to_contrast_examples = {}
+    
+    #assumes no duplicates in train_pmids
     for pmid in train_pmids:
         #store doc
         cur_doc = pmids_to_docs[pmid]
@@ -336,29 +351,37 @@ def _per_document_pseudo(self, pmids_to_docs, pmids_to_rats, pmids_to_labels, tr
             cur_list = neg_rats_masked_out
 
         for val in pmids_to_rats[pmid]:
+            lil_list = []
             #loop through each row in vector
             for row in range(val.shape[0]):
                 pseudoexample = cur_doc.copy()
                 #mask out contrast values
                 pseudoexample[0,val[row].nonzero()[1]] = 0
-                cur_list.append(pseudoexample)
+                lil_list.append(pseudoexample)
                 #add to master
                 master_contrast[0,val[row].nonzero()[1]] = 0
-        cur_list.append(master_contrast)
+        lil_list.append(master_contrast)
+        #ads little list to present 
+        cur_list.append(lil_list)
+        pmids_to_contrast_examples[pmid] = sp.sparse.vstack(lil_list)
+        #pmids_to_contrast_examples.append(sp.sparse.vstack(lil_list))
         
     #NOTE: can make a dictionary here real easy like
     neg_pseudoexamples = sp.sparse.vstack(pos_rats_masked_out)
     pos_pseudoexamples = sp.sparse.vstack(neg_rats_masked_out)
+     
     pdb.set_trace()
 
-    return pos_pseudoexamples, neg_pseudoexamples
+    return pos_pseudoexamples, neg_pseudoexamples, pmids_to_contrast_examples
 
 
-def _generate_pseudo_examples(self, X, X_rationales, rationale_worker_ids=None, mu=1):
+def _generate_pseudo_examples(self, X, X_rationales, train_pmids, rationale_worker_ids=None, mu=1): 
     print "-- generating instances for %s rationales --" % X_rationales.shape[0]
 
     contrast_instances = []
     workers = []
+    pmids_to_contrast_example_list = defaultdict(list)
+    pmids_to_contrast_examples = {}
     #pdb.set_trace()
 
     ##
@@ -368,6 +391,7 @@ def _generate_pseudo_examples(self, X, X_rationales, rationale_worker_ids=None, 
     results = Parallel(n_jobs=self.n_jobs,verbose=50)(delayed(_parallelPseudoExamples)(i,
                                                                                        X,
                                                                                        X_rationales,
+                                                                                       train_pmids,
                                                                                        rationale_worker_ids,
                                                                                        mu)
                                                      #for i in xrange(X.shape[0]))
@@ -375,16 +399,25 @@ def _generate_pseudo_examples(self, X, X_rationales, rationale_worker_ids=None, 
     #danbug
     for i in results:
         for ci in i[0]:
+            #todo: make sure these are matrices, not rows. 
             contrast_instances.append(ci)
         for w in i[1]:
             workers.append(w)
+        for ind, pmid in enumerate(i[2]):
+            pmids_to_contrast_example_list[pmid].append(i[0][ind])
+
+
+        #build pmid: contrast_example
+        for val in pmids_to_contrast_example_list.keys():
+            pmids_to_contrast_examples[val] = sp.sparse.vstack(pmids_to_contrast_example_list[val])
     
-    return sp.sparse.vstack(contrast_instances), workers
+    return sp.sparse.vstack(contrast_instances), workers, pmids_to_contrast_examples
 
 
-def _parallelPseudoExamples(i, X, X_rationales, rationale_worker_ids, mu):
+def _parallelPseudoExamples(i, X, X_rationales, train_pmids, rationale_worker_ids, mu): #train_pmids. should this be our pmids:documents dictionary? not if lined up
     contrast_instances = []
     workers = []
+    pmids = train_pmids[i]
     #get all terms in document i, which is the current document that we are inducing pseudo examples upon
     X_i_nonzero = X[i].nonzero()[1]
     #for all rationales
@@ -410,7 +443,8 @@ def _parallelPseudoExamples(i, X, X_rationales, rationale_worker_ids, mu):
             #default mu = 1, scale these later
             contrast_instances.append(pseudoexample/mu)
             workers.append(worker)
-    return (contrast_instances, workers)
+            #append pmid
+    return (contrast_instances, workers [pmid for val in range(len(contrast_instances))])
 
 
 def _load_data(path):

@@ -126,6 +126,8 @@ class ARModel():
         ###
         # now fit final model
         print "fitting final model to all data.."
+
+        pdb.set_trace()
         
         instance_weights = np.ones(X.shape[0]) * C_star
 
@@ -286,7 +288,7 @@ def parallelKFold(self, X, y, train_pmids, cur_alpha, cur_C, cur_C_contrast_scal
 
 
         cur_X_train = sp.sparse.vstack((cur_X_train, sp.sparse.vstack(contrast_examples)))
-        cur_y_train = np.hstack((cur_y_train, contrast_labels)))
+        cur_y_train = np.hstack((cur_y_train, contrast_labels))
 
         total_contrastive_count = len(contrast_labels)
 
@@ -362,16 +364,14 @@ def _per_document_pseudo(self, pmids_to_docs, pmids_to_rats, pmids_to_labels, tr
                 master_contrast[0,val[row].nonzero()[1]] = 0
         lil_list.append(master_contrast)
         #ads little list to present 
-        cur_list.append(lil_list)
+        cur_list.append(sp.sparse.vstack(lil_list))
         pmids_to_contrast_examples[pmid] = sp.sparse.vstack(lil_list)
         #pmids_to_contrast_examples.append(sp.sparse.vstack(lil_list))
-        
+
     #NOTE: can make a dictionary here real easy like
     neg_pseudoexamples = sp.sparse.vstack(pos_rats_masked_out)
     pos_pseudoexamples = sp.sparse.vstack(neg_rats_masked_out)
      
-    pdb.set_trace()
-
     return pos_pseudoexamples, neg_pseudoexamples, pmids_to_contrast_examples
 
 
@@ -417,7 +417,7 @@ def _generate_pseudo_examples(self, X, X_rationales, train_pmids, rationale_work
 def _parallelPseudoExamples(i, X, X_rationales, train_pmids, rationale_worker_ids, mu): #train_pmids. should this be our pmids:documents dictionary? not if lined up
     contrast_instances = []
     workers = []
-    pmids = train_pmids[i]
+    pmid = train_pmids[i]
     #get all terms in document i, which is the current document that we are inducing pseudo examples upon
     X_i_nonzero = X[i].nonzero()[1]
     #for all rationales
@@ -444,7 +444,9 @@ def _parallelPseudoExamples(i, X, X_rationales, train_pmids, rationale_worker_id
             contrast_instances.append(pseudoexample/mu)
             workers.append(worker)
             #append pmid
-    return (contrast_instances, workers [pmid for val in range(len(contrast_instances))])
+
+    pmids = [pmid for val in range(len(contrast_instances))]
+    return (contrast_instances, workers, pmids)
 
 
 def _load_data(path):

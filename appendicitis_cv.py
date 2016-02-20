@@ -832,8 +832,8 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer,
             old_train = X_train_pmids
             X_train_pmids = pmid_to_X_label.keys()
             for val in X_train_pmids:
-                q_X_train.append(pmid_to_X_train[pmid])
-                q_lbls.append(pmid_to_X_label[pmid])
+                q_X_train.append(pmid_to_X_train[val])
+                q_lbls.append(pmid_to_X_label[val])
 
 
 
@@ -897,7 +897,7 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer,
                                  pmids_to_rats = pmids_to_rationales,
                                  pmids_to_docs = pmid_to_X_train,
                                  pmids_to_labels = pmid_to_X_label)
-
+            pdb.set_trace()
             q_model.cv_fit(q_X_train, q_lbls, alpha_vals, C_vals, C_contrast_vals, mu_vals, X_train_pmids)
             q_models.append(q_model)
             #q_model = ar.ARModel(X_pos_rationales, X_neg_rationales, loss="log")

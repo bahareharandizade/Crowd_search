@@ -104,15 +104,15 @@ class ARModel():
         y = np.array(y)
 
         print "Initiating parallel KFolds"
-        #Danbug: reducing the number of these to see what else we even do here
+
         result = Parallel(n_jobs=self.n_jobs, verbose=50)(delayed(parallelKFold)(self,
                                                            X,
                                                            y,
                                                            train_pmids,
                                                            cur_alpha,
-                                                           C_vals[0],
-                                                           C_contrast_vals[0],
-                                                           mu_vals[0])
+                                                           cur_C,
+                                                           cur_C_contrast_scalar,
+                                                           cur_mu)
                                     for cur_alpha, cur_C, cur_C_contrast_scalar, cur_mu
                                     in product(alpha_vals, C_vals, C_contrast_vals, mu_vals))
                                     #for cur_alpha

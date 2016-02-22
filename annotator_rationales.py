@@ -14,7 +14,10 @@ from itertools import product, chain
 
 import scipy as sp 
 import numpy as np 
+import warnings
 
+#shuts up those infinite warnings coming to stdout to make it human
+warnings.filterwarnings('ignore')
 import sklearn
 from sklearn import cross_validation
 from sklearn.cross_validation import KFold
@@ -79,6 +82,9 @@ class ARModel():
         '''
         best_params = np.zeros(4) # assume alpha, C, C_contrast, mu
         best_score = np.inf
+
+        #need to do this for proper indexing later on
+        train_pmids = np.array(train_pmids)
 
         ###
         # also keep track of the workers associated with each
@@ -282,10 +288,10 @@ def parallelKFold(self, X, y, train_pmids, cur_alpha, cur_C, cur_C_contrast_scal
         contrast_labels = []
 
         for val in cur_pmids:
-            contrast_examples.append(pmids_to_contrast_examples[val]/cur_mu)
-            labels = np.ones(pmids_to_contrast_examples[val].shape[0])*pmids_to_labels[val]
-            contrast_labels.append(labels)
-
+            contrast_examples.append(self.pmids_to_contrast_examples[val]/cur_mu)
+            labels = np.ones(self.pmids_to_contrast_examples[val].shape[0])*self.pmids_to_labels[val]
+            #most have 2 labels b/c only 1 rat, so we're still duplicating efforts here
+            contrast_labels.extend(labels)
 
         cur_X_train = sp.sparse.vstack((cur_X_train, sp.sparse.vstack(contrast_examples)))
         cur_y_train = np.hstack((cur_y_train, contrast_labels))

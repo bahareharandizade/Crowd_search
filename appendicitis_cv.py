@@ -12,6 +12,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 import numpy as np 
+import scipy as sp
 
 from nltk import word_tokenize
 
@@ -826,7 +827,8 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer,
         if not use_worker_qualities :
             # undoes the duplication of documents by workers. 
             # builds up a vector of X_train and lbls consistent with order in X_train_pmids
-            # gives a standardized jumping off point for classifier. 
+            # gives a standardized jumping off point for classifier.
+            # TODO: you can and should fix this  
             q_X_train = []
             q_lbls = []
             old_train = X_train_pmids
@@ -835,7 +837,7 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer,
                 q_X_train.append(pmid_to_X_train[val])
                 q_lbls.append(pmid_to_X_label[val])
 
-
+            q_X_train = sp.sparse.vstack(q_X_train)
 
 
         if(use_rationales):
@@ -897,7 +899,6 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer,
                                  pmids_to_rats = pmids_to_rationales,
                                  pmids_to_docs = pmid_to_X_train,
                                  pmids_to_labels = pmid_to_X_label)
-            pdb.set_trace()
             q_model.cv_fit(q_X_train, q_lbls, alpha_vals, C_vals, C_contrast_vals, mu_vals, X_train_pmids)
             q_models.append(q_model)
             #q_model = ar.ARModel(X_pos_rationales, X_neg_rationales, loss="log")

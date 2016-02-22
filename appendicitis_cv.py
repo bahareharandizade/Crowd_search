@@ -297,11 +297,12 @@ def get_q_rationales_w_pmids(data, qnum, pmids,vectorizer):
     #pos_pmids_worker_dict = defaultdict(list)
 
     for ind,val in enumerate(neg_pmids):
-        to_vectorize = list(set(clean_rats(pos_rationales[ind].split(','))))
+        to_vectorize = list(set(clean_rats(neg_rationales[ind].split(','))))
 
-        pos_pmids_dict[val].append(vectorizer.transform(to_vectorize))
+        neg_pmids_dict[val].append(vectorizer.transform(to_vectorize))
         all_pmids_dict[val].append(vectorizer.transform(to_vectorize))
     #returns all, only using all_dict, but hey. 
+
     return pos_pmids_dict, neg_pmids_dict, all_pmids_dict
 
 def get_SGD(class_weight="auto", loss="log", random_state=None, fit_params=None, n_jobs=1):
@@ -398,6 +399,7 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, use
     mean_tpr = 0.0
     mean_fpr = np.linspace(0, 1, 100)
     all_tpr = []
+    cur_fold = 0
     for train_indices, test_indices in folds:
 
         # Split into training and testing PMIDs
@@ -489,7 +491,7 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, use
                                             vectorizer, model=model,
                                             use_worker_qualities=use_worker_qualities,
                                             use_rationales=True,
-                                            n_jobs=n_jobs,rat_test_flag=rat_test_flag)
+                                            n_jobs=n_jobs,rat_test_flag=rat_test_flag,cur_fold=cur_fold)
                 else:
                     q_models = get_q_models(annotations, X_all, pmids, train_pmids,
                                             vectorizer, model=model,
@@ -605,6 +607,7 @@ def rationales_exp_all_train(model="cf-stacked", use_worker_qualities=False, use
         fpr, tpr, thresholds = roc_curve(test_y, aggregate_predictions)
         mean_tpr += interp(mean_fpr, fpr, tpr)
         mean_tpr[0] = 0.0
+        cur_fold += 1
 
 
 
@@ -725,7 +728,7 @@ def get_grouped_rationales_model(annotations, X, train_y, pmids, train_pmids, tr
 
 
 def get_q_models(annotations, X, pmids, train_pmids, vectorizer, 
-                    model="cf-stacked", use_worker_qualities=True, use_rationales=False, n_jobs=1, rat_test_flag=False):
+                    model="cf-stacked", use_worker_qualities=True, use_rationales=False, n_jobs=1, rat_test_flag=False, cur_fold=0):
     q_models = []
     
     # Note we skip question 2 because it's numeric
@@ -899,7 +902,7 @@ def get_q_models(annotations, X, pmids, train_pmids, vectorizer,
                                  pmids_to_rats = pmids_to_rationales,
                                  pmids_to_docs = pmid_to_X_train,
                                  pmids_to_labels = pmid_to_X_label)
-            q_model.cv_fit(q_X_train, q_lbls, alpha_vals, C_vals, C_contrast_vals, mu_vals, X_train_pmids)
+            q_model.cv_fit(q_X_train, q_lbls, alpha_vals, C_vals, C_contrast_vals, mu_vals, X_train_pmids, cur_fold, question_num)
             q_models.append(q_model)
             #q_model = ar.ARModel(X_pos_rationales, X_neg_rationales, loss="log")
         else:

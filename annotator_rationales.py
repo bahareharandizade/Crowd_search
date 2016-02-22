@@ -14,6 +14,7 @@ from itertools import product, chain
 
 import scipy as sp 
 import numpy as np 
+import pandas as pd
 import warnings
 
 #shuts up those infinite warnings coming to stdout to make it human
@@ -76,7 +77,7 @@ class ARModel():
         print "loss: %s" % (self.loss)
 
 
-    def cv_fit(self, X, y, alpha_vals, C_vals, C_contrast_vals, mu_vals, train_pmids, contrast_examples = 'per_document'):
+    def cv_fit(self, X, y, alpha_vals, C_vals, C_contrast_vals, mu_vals, train_pmids, cur_fold, question_num, contrast_examples = 'per_document'):
         '''
         brute force (grid search) over hyper-parameters.
         '''
@@ -112,12 +113,15 @@ class ARModel():
                                                            C_vals[0],
                                                            C_contrast_vals[0],
                                                            mu_vals[0])
-                                    #for cur_alpha, cur_C, cur_C_contrast_scalar, cur_mu
-                                    #in product(alpha_vals, C_vals, C_contrast_vals, mu_vals))
-                                    for cur_alpha
-                                    in alpha_vals)
+                                    for cur_alpha, cur_C, cur_C_contrast_scalar, cur_mu
+                                    in product(alpha_vals, C_vals, C_contrast_vals, mu_vals))
+                                    #for cur_alpha
+                                    #in alpha_vals)
         print "FINISHED PARALLEL KFOLDS!!!!!"
+        print 'fold: ', cur_fold, 'q_num: ', question_num
         parameterScores = dict(result)
+        to_save = pd.DataFrame.from_dict(parameterScores)
+        to_save.to_csv('results/' + contrast_examples + '_fold_' + str(cur_fold) + 'q_' +  str(question_num) + '.csv')
         best_score = min(k for k, v in parameterScores.iteritems())
         bestParams = parameterScores[best_score]
         mu_star = bestParams['mu']
@@ -129,11 +133,11 @@ class ARModel():
                         mu_star, alpha_star, C_star, C_contrast_scalar_star)
         print "score: %s" % best_score
 
+        #TODO: save dictionary of parameters
+
         ###
         # now fit final model
         print "fitting final model to all data.."
-
-        pdb.set_trace()
         
         instance_weights = np.ones(X.shape[0]) * C_star
 
@@ -279,7 +283,7 @@ def parallelKFold(self, X, y, train_pmids, cur_alpha, cur_C, cur_C_contrast_scal
 
         # now append pseudo instances to the training data!
         # note that we scale these by cur_mu!
-        # TODO: now that we have our dict of pseudo instances, we can modify to only call on those in this fold. 
+        # note: only using those pmids in this fold for additional contrast examples
 
         # use list of pmids for lookup
         # build a list of pseudo_examples and a parallel list of labels
@@ -288,10 +292,15 @@ def parallelKFold(self, X, y, train_pmids, cur_alpha, cur_C, cur_C_contrast_scal
         contrast_labels = []
 
         for val in cur_pmids:
-            contrast_examples.append(self.pmids_to_contrast_examples[val]/cur_mu)
-            labels = np.ones(self.pmids_to_contrast_examples[val].shape[0])*self.pmids_to_labels[val]
-            #most have 2 labels b/c only 1 rat, so we're still duplicating efforts here
-            contrast_labels.extend(labels)
+            try:
+                contrast_examples.append(self.pmids_to_contrast_examples[val]/cur_mu)
+                labels = np.ones(self.pmids_to_contrast_examples[val].shape[0])*self.pmids_to_labels[val]
+                #most have 2 labels b/c only 1 rat, so we're still duplicating efforts here
+                contrast_labels.extend(labels)
+            except:
+                #skips over pmids with no worker rationales, no c.ex are generated
+                #only issue for per document
+                pass
 
         cur_X_train = sp.sparse.vstack((cur_X_train, sp.sparse.vstack(contrast_examples)))
         cur_y_train = np.hstack((cur_y_train, contrast_labels))
@@ -358,21 +367,26 @@ def _per_document_pseudo(self, pmids_to_docs, pmids_to_rats, pmids_to_labels, tr
         else:
             cur_list = neg_rats_masked_out
 
-        for val in pmids_to_rats[pmid]:
-            lil_list = []
-            #loop through each row in vector
-            for row in range(val.shape[0]):
-                pseudoexample = cur_doc.copy()
-                #mask out contrast values
-                pseudoexample[0,val[row].nonzero()[1]] = 0
-                lil_list.append(pseudoexample)
-                #add to master
-                master_contrast[0,val[row].nonzero()[1]] = 0
-        lil_list.append(master_contrast)
-        #ads little list to present 
-        cur_list.append(sp.sparse.vstack(lil_list))
-        pmids_to_contrast_examples[pmid] = sp.sparse.vstack(lil_list)
+        if pmids_to_rats[pmid] != []:
+            for val in pmids_to_rats[pmid]:
+                lil_list = []
+                #loop through each row in vector
+                for row in range(val.shape[0]):
+                    pseudoexample = cur_doc.copy()
+                    #mask out contrast values
+                    pseudoexample[0,val[row].nonzero()[1]] = 0
+                    lil_list.append(pseudoexample)
+                    #add to master
+                    master_contrast[0,val[row].nonzero()[1]] = 0
+            lil_list.append(master_contrast)
+            #ads little list to present 
+            cur_list.append(sp.sparse.vstack(lil_list))
+            pmids_to_contrast_examples[pmid] = sp.sparse.vstack(lil_list)
         #pmids_to_contrast_examples.append(sp.sparse.vstack(lil_list))
+        else:
+            #print 'derp', str(pmid)
+            pass
+
 
     #NOTE: can make a dictionary here real easy like
     neg_pseudoexamples = sp.sparse.vstack(pos_rats_masked_out)

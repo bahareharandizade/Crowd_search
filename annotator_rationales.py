@@ -122,7 +122,7 @@ class ARModel():
         
         parameterScores = dict(result)
         to_save = pd.DataFrame.from_items(result)
-        pdb.set_trace()
+
         to_save.to_csv('results/' + contrast_examples + '_fold_' + str(cur_fold) + 'q_' +  str(question_num) + '.csv')
         best_score = min(k for k, v in parameterScores.iteritems())
         bestParams = parameterScores[best_score]
